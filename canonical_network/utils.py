@@ -12,6 +12,7 @@ DATA_PATH = SRC_PATH / "data"
 
 def dict_to_object(dictionary):
     global Object
+    print(dictionary)
     Object = namedtuple("Object", dictionary)
     out_object = Object(**dictionary)
 

@@ -1,6 +1,7 @@
 from collections import namedtuple
 
 from turtle import forward
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -17,16 +18,17 @@ from canonical_network.utils import define_hyperparams, dict_to_object
 SET_HYPERPARAMS = {
     "learning_rate": 1e-3,
     "num_embeddings": 10,
-    "canon_num_layers": 2,
+    "canon_num_layers": 3,
     "canon_hidden_dim": 32,
     "num_clusters": 3,
     "canon_model_type": "deepsets",
     "canon_layer_pooling": "sum",
-    "num_layers": 3,
-    "hidden_dim": 32,
+    "num_layers": 6,
+    "hidden_dim": 64,
     "out_dim": 1,
     "layer_pooling": "sum",
     "final_pooling": "",
+    "temperature_anneal": 0.0
 }
 
 
@@ -39,6 +41,7 @@ class SetCanonFunction(pl.LightningModule):
         self.num_clusters = hyperparams.num_clusters
         self.model_type = hyperparams.canon_model_type
         self.canon_layer_pooling = hyperparams.canon_layer_pooling
+        self.temprature_anneal = hyperparams.temperature_anneal
 
         model_hyperparams = {
             "num_embeddings": self.num_embeddings,
@@ -51,9 +54,14 @@ class SetCanonFunction(pl.LightningModule):
 
         self.model = {"deepsets": lambda: DeepSets(define_hyperparams(model_hyperparams))}[self.model_type]()
 
-    def forward(self, x, set_indices):
-        output = self.model(x, set_indices)
-        return F.softmax(output, dim=1)
+    def forward(self, x, set_indices, batch_idx):
+        output = self.model(x, set_indices, batch_idx)
+        temperature = self.get_temperature(batch_idx)
+        return F.softmax(output / temperature, dim=1)
+    
+    def get_temperature(self, batch_idx):
+        temperature = np.exp(-self.temprature_anneal * batch_idx)
+        return np.max([0.1, temperature])
 
 
 class SetPredictionLayer(pl.LightningModule):
@@ -80,7 +88,8 @@ class SetPredictionLayer(pl.LightningModule):
         outer = rearrange(outer, "b (k f) -> b k f", k=self.num_clusters, f=self.out_dim)
         outer = torch.einsum("nbk, bkf->nf", cluster_matrix, outer)
 
-        output = F.relu(x + identity + outer)
+        # residual connection
+        output = F.relu(identity + outer) + x
 
         return output, clusters, set_indices
 
@@ -127,18 +136,19 @@ class SetModel(BaseSetModel):
         self.batch_size = hyperparams.batch_size
         self.num_embeddings = hyperparams.num_embeddings
 
-        self.save_hyperparameters()
-
-    def forward(self, x, set_indices):
-        clusters = self.canon_function(x, set_indices)
+    def forward(self, x, set_indices, batch_idx):
+        clusters = self.canon_function(x, set_indices, batch_idx)
         output = self.prediction_function(x, clusters, set_indices)
 
         return output, clusters
-    
+
     def get_predictions(self, x):
         return x[0]
 
     def validation_epoch_end(self, validation_step_outputs):
+        scheduler = self.lr_schedulers()
+        self.log("lr", scheduler.optimizer.param_groups[0]["lr"])
+
         predictions, clusters = validation_step_outputs[0]
         if self.current_epoch == 0:
             dummy_input = torch.zeros(self.num_embeddings, device=self.device, dtype=torch.long)
@@ -146,7 +156,7 @@ class SetModel(BaseSetModel):
             model_filename = (
                 f"canonical_network/results/digits/onnx_models/set_model_{wandb.run.name}_{str(self.global_step)}.onnx"
             )
-            torch.onnx.export(self, (dummy_input, dummy_indices), model_filename, opset_version=12)
+            torch.onnx.export(self, (dummy_input, dummy_indices, 0.0), model_filename, opset_version=12)
             wandb.save(model_filename)
 
         self.logger.experiment.log(

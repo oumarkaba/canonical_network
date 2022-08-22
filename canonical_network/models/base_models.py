@@ -35,8 +35,8 @@ class BaseSetModel(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         inputs, indices, targets = batch
-        output = self(inputs, indices)
-        predictions = self.get_predictions(output)
+        output = self(inputs, indices, batch_idx)
+        predictions = self.get_predictions(output).squeeze()
 
         loss = F.binary_cross_entropy(predictions, targets.to(torch.float32))
         accuracy = tmf.accuracy(predictions, targets)
@@ -48,7 +48,7 @@ class BaseSetModel(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         inputs, indices, targets = batch
-        output = self(inputs, indices)
+        output = self(inputs, indices, batch_idx)
         predictions = self.get_predictions(output)
 
         loss = F.binary_cross_entropy(predictions, targets.to(torch.float32))
@@ -65,7 +65,7 @@ class BaseSetModel(pl.LightningModule):
         return output
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate, weight_decay=1e-10)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=20, factor=0.5, min_lr=1e-6, mode="max")
         return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": "valid/f1_score"}
 
@@ -78,7 +78,7 @@ class BaseSetModel(pl.LightningModule):
             model_filename = (
                 f"canonical_network/results/digits/onnx_models/{self.model}_{wandb.run.name}_{str(self.global_step)}.onnx"
             )
-            torch.onnx.export(self, (self.dummy_input, self.dummy_indices), model_filename, opset_version=12)
+            torch.onnx.export(self, (self.dummy_input, self.dummy_indices, 0.0), model_filename, opset_version=12)
             wandb.save(model_filename)
 
         self.logger.experiment.log(
@@ -107,7 +107,7 @@ class SetLayer(pl.LightningModule):
         pooling = self.pooling_linear(pooled_set)
         pooling = torch.index_select(pooling, 0, set_indices)
 
-        output = F.relu(x + identity + pooling)
+        output = F.relu(identity + pooling) + x
 
         return output, set_indices
 
@@ -125,13 +125,13 @@ class DeepSets(BaseSetModel):
         self.dummy_input = torch.zeros(1, device=self.device, dtype=torch.long)
         self.dummy_indices = torch.zeros(1, device=self.device, dtype=torch.long)
 
-    def forward(self, x, set_indices):
+    def forward(self, x, set_indices, _):
         embeddings = self.embedding_layer(x)
         x, _ = self.set_layers(embeddings, set_indices)
         if self.final_pooling:
             x = ts.scatter(x, set_indices, reduce=self.final_pooling)
         output = self.output_layer(x)
-        return output.squeeze()
+        return output
 
 # Transformer
 
@@ -147,7 +147,7 @@ class Transformer(BaseSetModel):
         self.dummy_input = torch.zeros((1,1), device=self.device, dtype=torch.long)
         self.dummy_indices = torch.zeros((1,1), device=self.device, dtype=torch.long)
 
-    def forward(self, x, mask):
+    def forward(self, x, mask, _):
         embeddings = self.embedding_layer(x)
         x = self.transformer_encoder(embeddings, src_key_padding_mask=mask)
         # FIXME : Implement this
