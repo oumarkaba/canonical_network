@@ -1,18 +1,13 @@
-from gettext import translation
-from sched import scheduler
-from turtle import forward
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.autograd import Variable
 import pytorch_lightning as pl
 from pytorch3d.transforms import RotateAxisAngle, Rotate, random_rotations
 import torchmetrics.functional as tmf
 import wandb
 
-from models.vn_layers import *
-from models.pointcloud_base_models import BasePointcloudModel, Pointnet, VNPointnetSmall
+from canonical_network.models.vn_layers import *
+from canonical_network.models.pointcloud_base_models import BasePointcloudModel, Pointnet, VNPointnetSmall
 from canonical_network.utils import define_hyperparams, dict_to_object
 
 SEGMENTATION_CLASSES = {
@@ -46,7 +41,7 @@ SHAPENET_HYPERPARAMS = {
     "num_points": 2048,
 }
 
-class PointcloudCanonFunction(nn.Module):
+class PointcloudCanonFunction(pl.LightningModule):
     def __init__(self, hyperparams):
         super().__init__()
         self.n_knn = hyperparams.n_knn
@@ -88,7 +83,7 @@ class PointcloudCanonFunction(nn.Module):
         return torch.stack([v1, v2, v3], dim=1)
 
 
-class PointcloudPredFunction(nn.Module):
+class PointcloudPredFunction(pl.LightningModule):
     def __init__(self, hyperparams):
         super().__init__()
         self.n_knn = hyperparams.n_knn

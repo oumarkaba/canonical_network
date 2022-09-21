@@ -9,8 +9,8 @@ from pytorch3d.transforms import RotateAxisAngle, Rotate, random_rotations
 import torchmetrics.functional as tmf
 import wandb
 
-from models.vn_layers import *
-from utils import to_categorical
+from canonical_network.models.vn_layers import *
+from canonical_network.utils import to_categorical
 
 SEGMENTATION_CLASSES = {
     "Earphone": [16, 17, 18],
@@ -365,7 +365,7 @@ class VNPointnet(BasePointcloudModel):
         return net
 
 
-class VNPointnetSmall(nn.Module):
+class VNPointnetSmall(pl.LightningModule):
     def __init__(self, hyperparams):
         super(VNPointnetSmall, self).__init__()
         self.model = "vn_pointnet"
@@ -430,7 +430,7 @@ class VNPointnetSmall(nn.Module):
         return out
 
 
-class STN3d(nn.Module):
+class STN3d(pl.LightningModule):
     def __init__(self, channel):
         super(STN3d, self).__init__()
         self.conv1 = torch.nn.Conv1d(channel, 64, 1)
@@ -471,7 +471,7 @@ class STN3d(nn.Module):
         return x
 
 
-class STNkd(nn.Module):
+class STNkd(pl.LightningModule):
     def __init__(self, k=64):
         super(STNkd, self).__init__()
         self.conv1 = torch.nn.Conv1d(k, 64, 1)
@@ -514,7 +514,7 @@ class STNkd(nn.Module):
         return x
 
 
-class VNSTNkd(nn.Module):
+class VNSTNkd(pl.LightningModule):
     def __init__(self, hyperparams, d):
         super(VNSTNkd, self).__init__()
         self.conv1 = VNLinearLeakyReLU(d, 64 // 3, dim=4, negative_slope=0.0)
