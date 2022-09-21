@@ -157,6 +157,3 @@ class Transformer(BaseSetModel):
         return output
 
 
-# Scalars
-
-
