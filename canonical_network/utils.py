@@ -42,6 +42,10 @@ class SetDataset(Dataset):
         return self.features[index], self.targets[index]
 
 
+def to_categorical(y, num_classes):
+    return torch.eye(num_classes)[y]
+
+
 def combine_set_data_sparse(set_data):
     set_features, targets = zip(*set_data)
 

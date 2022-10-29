@@ -11,8 +11,7 @@ import torchmetrics.functional as tmf
 from einops import rearrange
 import wandb
 
-from canonical_network.models.base_models import BaseSetModel, DeepSets, SequentialMultiple
-import canonical_network.utils as utils
+from canonical_network.models.set_base_models import BaseSetModel, DeepSets, SequentialMultiple
 from canonical_network.utils import define_hyperparams, dict_to_object
 
 SET_HYPERPARAMS = {

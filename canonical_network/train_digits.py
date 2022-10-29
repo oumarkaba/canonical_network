@@ -9,9 +9,9 @@ import wandb
 import canonical_network.utils as utils
 from canonical_network.prepare.digits_data import DigitsDataModule
 from canonical_network.models.set_model import SET_HYPERPARAMS, SetModel
-from canonical_network.models.base_models import DeepSets, Transformer
+from canonical_network.models.set_base_models import DeepSets, Transformer
 
-HYPERPARAMS = {"model": "set_model","batch_size": 64, "dryrun": False, "num_epochs": 500, "num_workers":0, "auto_tune":False, "seed": 0}
+HYPERPARAMS = {"model": "set_model","batch_size": 64, "dryrun": True, "num_epochs": 500, "num_workers":0, "auto_tune":False, "seed": 0}
 
 def train_digits():
     hyperparams = HYPERPARAMS | SET_HYPERPARAMS
