@@ -1,0 +1,2 @@
+from .rotated_mnist_data import RotatedMNISTDataModule
+from .cifar_data import CIFAR10DataModule
