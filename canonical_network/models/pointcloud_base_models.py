@@ -1,4 +1,3 @@
-from sched import scheduler
 import numpy as np
 import torch
 import torch.nn as nn
@@ -338,6 +337,7 @@ class DGCNN(BasePointcloudModel):
         
 
     def forward(self, x, l):
+        B, D, N = x.size()
         batch_size = x.size(0)
         num_points = x.size(2)
 
@@ -360,7 +360,7 @@ class DGCNN(BasePointcloudModel):
         x = self.conv6(x)
         x = x.max(dim=-1, keepdim=True)[0]
 
-        l = l.view(batch_size, -1, 1)
+        l = l.view(batch_size, -1, 1).type_as(x)
         l = self.conv7(l)
 
         x = torch.cat((x, l), dim=1)
@@ -374,9 +374,14 @@ class DGCNN(BasePointcloudModel):
         x = self.dp2(x)
         x = self.conv10(x)
         x = self.conv11(x)
+
+        x = x.transpose(1, 2).contiguous()
+
+        net = F.log_softmax(x.view(-1, self.num_parts), dim=-1)
+        net = net.view(B, N, self.num_parts)  # [B, N, 50]
         
         trans_feat = None
-        return x.transpose(1, 2), trans_feat
+        return net, trans_feat
 
 
     def get_predictions(self, outputs):
