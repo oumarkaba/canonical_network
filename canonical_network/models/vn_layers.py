@@ -31,7 +31,7 @@ class VNBilinear(nn.Module):
         '''
         x: point features of shape [B, N_feat, 3, N_samples, ...]
         '''
-        labels = labels.repeat(1, x.shape[2], 1)
+        labels = labels.repeat(1, x.shape[2], 1).float()
         x_out = self.map_to_feat(x.transpose(1,-1), labels).transpose(1,-1)
         return x_out
 

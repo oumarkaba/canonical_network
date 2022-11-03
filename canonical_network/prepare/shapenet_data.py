@@ -173,7 +173,7 @@ class ShapenetPartDataModule(pl.LightningDataModule):
         valid_loader = DataLoader(
             self.valid_dataset,
             self.hyperparams.batch_size,
-            True,
+            False,
             num_workers=self.hyperparams.num_workers,
         )
         return valid_loader

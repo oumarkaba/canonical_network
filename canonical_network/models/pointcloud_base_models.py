@@ -41,7 +41,8 @@ class BasePointcloudModel(pl.LightningModule):
         super().__init__()
         self.num_parts = hyperparams.num_parts
         self.num_classes = hyperparams.num_classes
-        self.rotation = hyperparams.rotation
+        self.train_rotation = hyperparams.train_rotation
+        self.valid_rotation = hyperparams.valid_rotation
         self.num_points = hyperparams.num_points
         self.learning_rate = hyperparams.learning_rate if hasattr(hyperparams, "learning_rate") else None
 
@@ -52,22 +53,22 @@ class BasePointcloudModel(pl.LightningModule):
 
     def get_predictions(self, outputs):
         if type(outputs) == list:
-            return torch.stack(outputs)
+            return torch.cat(outputs, dim=0)
         return outputs
 
     def training_step(self, batch, batch_idx):
         points, label, targets = batch
         points, label, targets = points.float(), label.long(), targets.long()
 
-        if self.rotation == "z":
-            trot = RotateAxisAngle(angle=torch.rand(points.shape[0]) * 360, axis="Z", degrees=True)
+        if self.train_rotation == "z":
+            trot = RotateAxisAngle(angle=torch.rand(points.shape[0]) * 360, axis="Z", degrees=True, device=self.device)
             points = trot.transform_points(points)
-        elif self.rotation == "so3":
-            trot = Rotate(R=random_rotations(points.shape[0]))
+        elif self.train_rotation == "so3":
+            trot = Rotate(R=random_rotations(points.shape[0]), device=self.device)
             points = trot.transform_points(points)
 
         points = points.transpose(2, 1)
-        ont_hot_labels = to_categorical(label, self.num_classes)
+        ont_hot_labels = to_categorical(label, self.num_classes).type_as(label)
         outputs = self(points, ont_hot_labels)
         predictions = self.get_predictions(outputs).squeeze()
 
@@ -83,14 +84,14 @@ class BasePointcloudModel(pl.LightningModule):
         points, label, targets = batch
         points, label, targets = points.float(), label.long(), targets.long()
 
-        if self.rotation == "z":
-            trot = RotateAxisAngle(angle=torch.rand(points.shape[0]) * 360, axis="Z", degrees=True)
+        if self.valid_rotation == "z":
+            trot = RotateAxisAngle(angle=torch.rand(points.shape[0]) * 360, axis="Z", degrees=True, device=self.device)
             points = trot.transform_points(points)
-        elif self.rotation == "so3":
-            trot = Rotate(R=random_rotations(points.shape[0]))
+        elif self.valid_rotation == "so3":
+            trot = Rotate(R=random_rotations(points.shape[0]), device=self.device)
             points = trot.transform_points(points)
 
-        ont_hot_labels = to_categorical(label, self.num_classes)
+        ont_hot_labels = to_categorical(label, self.num_classes).type_as(label)
         outputs = self(points.transpose(2, 1), ont_hot_labels)
         predictions = self.get_predictions(outputs)
 
@@ -128,7 +129,7 @@ class BasePointcloudModel(pl.LightningModule):
         if self.current_epoch == 0:
             model_filename = f"canonical_network/results/shapenet/onnx_models/{self.model}_{wandb.run.name}_{str(self.global_step)}.onnx"
             if self.model == "pointnet":
-                torch.onnx.export(self, (self.dummy_input, self.dummy_indices), model_filename, opset_version=15)
+                torch.onnx.export(self, (self.dummy_input.to(self.device), self.dummy_indices.to(self.device)), model_filename, opset_version=15)
             wandb.save(model_filename)
 
         self.logger.experiment.log(
@@ -257,7 +258,7 @@ class Pointnet(BasePointcloudModel):
     def get_predictions(self, outputs):
         if type(outputs) == list:
             outputs = list(zip(*outputs))
-            return torch.stack(outputs[0])
+            return torch.cat(outputs[0], dim=0)
         return outputs[0]
 
     def get_loss(self, outputs, targets):
@@ -382,14 +383,12 @@ class VNPointnetSmall(pl.LightningModule):
         self.conv_pos = VNLinearLeakyReLU(3, 64 // 3, dim=5, negative_slope=0.0)
         self.conv1 = VNLinearLeakyReLU(64 // 3, 64 // 3, dim=4, negative_slope=0.0)
         self.conv2 = VNLinearLeakyReLU(64 // 3, 128 // 3, dim=4, negative_slope=0.0)
-        self.conv4 = VNLinearLeakyReLU(128 // 3 * 2, 512 // 3, dim=4, negative_slope=0.0)
+        self.conv4 = VNLinearLeakyReLU(128 // 3 * 2, 256 // 3, dim=4, negative_slope=0.0)
 
-        self.conv5 = VNLinearLeakyReLU(512 // 3, 512 // 3, dim=4, negative_slope=0.0)
-        self.bn5 = VNBatchNorm(512 // 3, dim=4)
+        self.conv5 = VNLinearLeakyReLU(256 // 3, 256 // 3, dim=4, negative_slope=0.0)
+        self.bn5 = VNBatchNorm(256 // 3, dim=4)
 
-        self.conv6 = VNBilinear(512 // 3, self.num_classes, 12 // 3)
-
-        self.std_feature = VNStdFeature(2048 // 3 * 2, dim=4, normalize_frame=False, negative_slope=0.0)
+        self.conv6 = VNBilinear(256 // 3, self.num_classes, 12 // 3)
 
         if self.pooling == "max":
             self.pool = VNMaxPool(64 // 3)
@@ -397,14 +396,6 @@ class VNPointnetSmall(pl.LightningModule):
             self.pool = mean_pool
 
         self.fstn = VNSTNkd(hyperparams, d=128 // 3)
-
-        self.convs1 = torch.nn.Conv1d(9025, 256, 1)
-        self.convs2 = torch.nn.Conv1d(256, 256, 1)
-        self.convs3 = torch.nn.Conv1d(256, 128, 1)
-        self.convs4 = torch.nn.Conv1d(128, self.num_parts, 1)
-        self.bns1 = nn.BatchNorm1d(256)
-        self.bns2 = nn.BatchNorm1d(256)
-        self.bns3 = nn.BatchNorm1d(128)
 
     def forward(self, point_cloud, labels):
         B, D, N = point_cloud.size()
@@ -561,7 +552,7 @@ def get_graph_feature_cross(x, k=20, idx=None):
     if idx is None:
         idx = knn(x, k=k)
 
-    idx_base = torch.arange(0, batch_size).view(-1, 1, 1) * num_points
+    idx_base = torch.arange(0, batch_size).type_as(idx).view(-1, 1, 1) * num_points
 
     idx = idx + idx_base
 

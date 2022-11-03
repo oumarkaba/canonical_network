@@ -34,7 +34,8 @@ SHAPENET_HYPERPARAMS = {
     "pooling": "mean",
     "normal_channel": False,
     "regularization_transform": 0,
-    "rotation": "aligned",
+    "train_rotation": "z",
+    "valid_rotation": "z",
     "num_parts": 50,
     "num_classes": 16,
     "n_knn": 40,
@@ -50,7 +51,8 @@ class PointcloudCanonFunction(pl.LightningModule):
         self.num_classes = hyperparams.num_classes
         self.num_points = hyperparams.num_points
         self.pooling = hyperparams.pooling
-        self.rotation = hyperparams.rotation
+        self.train_rotation = hyperparams.train_rotation
+        self.valid_rotation = hyperparams.valid_rotation
         self.model_type = hyperparams.canon_model_type
 
         model_hyperparams = {
@@ -59,7 +61,8 @@ class PointcloudCanonFunction(pl.LightningModule):
             "num_parts": self.num_parts,
             "num_classes": self.num_classes,
             "pooling": self.pooling,
-            "rotation": self.rotation,
+            "train_rotation": self.train_rotation,
+            "valid_rotation": self.valid_rotation,
             "num_points": self.num_points,
         }
 
@@ -92,7 +95,8 @@ class PointcloudPredFunction(pl.LightningModule):
         self.num_classes = hyperparams.num_classes
         self.num_points = hyperparams.num_points
         self.pooling = hyperparams.pooling
-        self.rotation = hyperparams.rotation
+        self.train_rotation = hyperparams.train_rotation
+        self.valid_rotation = hyperparams.valid_rotation
         self.regularization_transform = hyperparams.regularization_transform    
         self.model_type = "pointnet"
 
@@ -103,7 +107,8 @@ class PointcloudPredFunction(pl.LightningModule):
             "num_classes": self.num_classes,
             "num_points": self.num_points,
             "pooling": self.pooling,
-            "rotation": self.rotation,
+            "train_rotation": self.train_rotation,
+            "valid_rotation": self.valid_rotation,
             "regularization_transform": self.regularization_transform,
         }
 
@@ -127,8 +132,12 @@ class PointcloudModel(BasePointcloudModel):
 
     def forward(self, point_cloud, label):
         rotation_matrix, translation_vectors = self.canon_function(point_cloud, label)
+        rotation_matrix_det = torch.linalg.det(rotation_matrix)
+        print(rotation_matrix_det)
         rotation_matrix_inverse = rotation_matrix.transpose(1,2)
-        canonical_point_cloud = torch.bmm(point_cloud.transpose(1,2), rotation_matrix_inverse) - translation_vectors
+
+        # not applying translations
+        canonical_point_cloud = torch.bmm(point_cloud.transpose(1,2), rotation_matrix_inverse)
         canonical_point_cloud = canonical_point_cloud.transpose(1,2)
 
         return self.pred_function(canonical_point_cloud, label)[0], rotation_matrix
@@ -136,5 +145,5 @@ class PointcloudModel(BasePointcloudModel):
     def get_predictions(self, outputs):
         if type(outputs) == list:
             outputs = list(zip(*outputs))
-            return torch.stack(outputs[0])
+            return torch.cat(outputs[0], dim=0)
         return outputs[0]

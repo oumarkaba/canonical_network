@@ -11,7 +11,7 @@ from canonical_network.prepare.shapenet_data import ShapenetPartDataModule
 from canonical_network.models.pointcloud_model import SHAPENET_HYPERPARAMS, PointcloudModel
 from canonical_network.models.pointcloud_base_models import Pointnet, VNPointnet
 
-HYPERPARAMS = {"model": "pointcloud_model", "canon_model_type": "vn_pointnet","batch_size": 4, "dryrun": True, "num_epochs": 500, "num_workers":0, "auto_tune":False, "seed": 0, "num_parts": 50, "num_classes": 16}
+HYPERPARAMS = {"model": "pointnet", "canon_model_type": "vn_pointnet","batch_size": 64, "dryrun": False, "num_epochs": 500, "num_workers":0, "auto_tune":False, "seed": 0, "num_parts": 50, "num_classes": 16}
 
 def train_pointnet():
     hyperparams = HYPERPARAMS | SHAPENET_HYPERPARAMS
@@ -34,12 +34,12 @@ def train_pointnet():
     model = {"pointcloud_model": lambda: PointcloudModel(shapenet_hypeyparams), "pointnet": lambda: Pointnet(shapenet_hypeyparams), "vn_pointnet": lambda: VNPointnet(shapenet_hypeyparams)}[shapenet_hypeyparams.model]()
 
     if shapenet_hypeyparams.auto_tune:
-        trainer = pl.Trainer(fast_dev_run=shapenet_hypeyparams.dryrun, max_epochs=shapenet_hypeyparams.num_epochs, accelerator="auto", auto_scale_batch_size=True, auto_lr_find=True, logger=wandb_logger, callbacks=callbacks, deterministic=True)
+        trainer = pl.Trainer(fast_dev_run=shapenet_hypeyparams.dryrun, max_epochs=shapenet_hypeyparams.num_epochs, accelerator="auto", auto_scale_batch_size=True, auto_lr_find=True, logger=wandb_logger, callbacks=callbacks, deterministic=False)
         trainer.tune(model, datamodule=shapenet_data)
     elif shapenet_hypeyparams.dryrun:
-        trainer = pl.Trainer(fast_dev_run=False, max_epochs=2, accelerator="auto", limit_train_batches=10, limit_val_batches=10, logger=wandb_logger, callbacks=callbacks, deterministic=True)
+        trainer = pl.Trainer(fast_dev_run=False, max_epochs=2, accelerator="auto", limit_train_batches=10, limit_val_batches=10, logger=wandb_logger, callbacks=callbacks, deterministic=False)
     else:
-        trainer = pl.Trainer(fast_dev_run=shapenet_hypeyparams.dryrun, max_epochs=shapenet_hypeyparams.num_epochs, accelerator="auto", logger=wandb_logger, callbacks=callbacks, deterministic=True)
+        trainer = pl.Trainer(fast_dev_run=shapenet_hypeyparams.dryrun, max_epochs=shapenet_hypeyparams.num_epochs, accelerator="auto", logger=wandb_logger, callbacks=callbacks, deterministic=False)
 
     trainer.fit(model, datamodule=shapenet_data)
 
