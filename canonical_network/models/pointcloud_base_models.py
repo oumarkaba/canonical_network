@@ -360,7 +360,7 @@ class DGCNN(BasePointcloudModel):
         x = self.conv6(x)
         x = x.max(dim=-1, keepdim=True)[0]
 
-        l = l.view(batch_size, -1, 1)
+        l = l.view(batch_size, -1, 1).type_as(x)
         l = self.conv7(l)
 
         x = torch.cat((x, l), dim=1)
@@ -374,6 +374,8 @@ class DGCNN(BasePointcloudModel):
         x = self.dp2(x)
         x = self.conv10(x)
         x = self.conv11(x)
+
+        x = F.log_softmax()
         
         trans_feat = None
         return x.transpose(1, 2), trans_feat
@@ -382,7 +384,7 @@ class DGCNN(BasePointcloudModel):
     def get_predictions(self, outputs):
         if type(outputs) == list:
             outputs = list(zip(*outputs))
-            return torch.stack(outputs[0])
+            return torch.cat(outputs, dim=0)
         return outputs[0]
 
 
@@ -658,7 +660,7 @@ def get_graph_feature(x, k=20, idx=None, x_coord=None):
         else:          # fixed knn graph with input point coordinates
             idx = knn(x_coord, k=k)
 
-    idx_base = torch.arange(0, batch_size).view(-1, 1, 1)*num_points
+    idx_base = torch.arange(0, batch_size).type_as(idx).view(-1, 1, 1) * num_points
 
     idx = idx + idx_base
 

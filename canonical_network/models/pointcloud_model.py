@@ -132,8 +132,6 @@ class PointcloudModel(BasePointcloudModel):
 
     def forward(self, point_cloud, label):
         rotation_matrix, translation_vectors = self.canon_function(point_cloud, label)
-        rotation_matrix_det = torch.linalg.det(rotation_matrix)
-        print(rotation_matrix_det)
         rotation_matrix_inverse = rotation_matrix.transpose(1,2)
 
         # not applying translations
