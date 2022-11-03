@@ -7,7 +7,7 @@ import torchmetrics.functional as tmf
 import wandb
 
 from canonical_network.models.vn_layers import *
-from canonical_network.models.pointcloud_base_models import BasePointcloudModel, Pointnet, VNPointnetSmall
+from canonical_network.models.pointcloud_base_models import BasePointcloudModel, Pointnet, VNPointnetSmall, DGCNN
 from canonical_network.utils import define_hyperparams, dict_to_object
 
 SEGMENTATION_CLASSES = {
@@ -98,7 +98,7 @@ class PointcloudPredFunction(pl.LightningModule):
         self.train_rotation = hyperparams.train_rotation
         self.valid_rotation = hyperparams.valid_rotation
         self.regularization_transform = hyperparams.regularization_transform    
-        self.model_type = "pointnet"
+        self.model_type = hyperparams.pred_model_type
 
         model_hyperparams = {
             "n_knn": self.n_knn,
@@ -112,7 +112,7 @@ class PointcloudPredFunction(pl.LightningModule):
             "regularization_transform": self.regularization_transform,
         }
 
-        self.model = {"pointnet": lambda: Pointnet(define_hyperparams(model_hyperparams))}[self.model_type]()
+        self.model = {"pointnet": lambda: Pointnet(define_hyperparams(model_hyperparams)), "DGCNN": lambda: DGCNN(define_hyperparams(model_hyperparams))}[self.model_type]()
     
     def forward(self, points, labels):
         return self.model(points, labels)
