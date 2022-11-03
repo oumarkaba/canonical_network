@@ -166,6 +166,7 @@ class ShapenetPartDataModule(pl.LightningDataModule):
             self.hyperparams.batch_size,
             True,
             num_workers=self.hyperparams.num_workers,
+            drop_last=True,
         )
         return train_loader
 
@@ -175,5 +176,6 @@ class ShapenetPartDataModule(pl.LightningDataModule):
             self.hyperparams.batch_size,
             False,
             num_workers=self.hyperparams.num_workers,
+            drop_last=True,
         )
         return valid_loader
