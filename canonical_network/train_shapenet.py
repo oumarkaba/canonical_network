@@ -11,7 +11,7 @@ from canonical_network.prepare.shapenet_data import ShapenetPartDataModule
 from canonical_network.models.pointcloud_model import SHAPENET_HYPERPARAMS, PointcloudModel
 from canonical_network.models.pointcloud_base_models import Pointnet, VNPointnet
 
-HYPERPARAMS = {"model": "pointcloud_model", "canon_model_type": "vn_pointnet","batch_size": 4, "dryrun": True, "num_epochs": 500, "num_workers":0, "auto_tune":False, "seed": 0, "num_parts": 50, "num_classes": 16}
+HYPERPARAMS = {"model": "pointcloud_model", "canon_model_type": "vn_pointnet", "pred_model_type": "DGCNN","batch_size": 4, "dryrun": False, "num_epochs": 500, "num_workers":0, "auto_tune":False, "seed": 0, "num_parts": 50, "num_classes": 16}
 
 def train_pointnet():
     hyperparams = HYPERPARAMS | SHAPENET_HYPERPARAMS
