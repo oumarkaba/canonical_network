@@ -2,12 +2,13 @@ import pytorch_lightning as pl
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 import wandb
+import os
 
 from canonical_network.prepare.shapenet_data import ShapenetPartDataModule
 from canonical_network.models.pointcloud_model import SHAPENET_HYPERPARAMS, PointcloudModel
 from canonical_network.models.pointcloud_base_models import Pointnet, VNPointnet
 
-HYPERPARAMS = {"model": "pointcloud_model", "canon_model_type": "vn_pointnet", "pred_model_type": "DGCNN", "batch_size": 4, "dryrun": True, "num_epochs": 500, "num_workers":0, "auto_tune":False, "seed": 0, "num_parts": 50, "num_classes": 16}
+HYPERPARAMS = {"model": "pointcloud_model", "canon_model_type": "vn_pointnet", "pred_model_type": "DGCNN", "batch_size": 4, "dryrun": True, "use_wandb": False, "num_epochs": 500, "num_workers":0, "auto_tune":False, "seed": 0, "num_parts": 50, "num_classes": 16}
 
 def train_pointnet():
     hyperparams = HYPERPARAMS | SHAPENET_HYPERPARAMS
@@ -17,6 +18,13 @@ def train_pointnet():
 
     hyperparams = wandb.config
     shapenet_hypeyparams = hyperparams
+
+    if not hyperparams.use_wandb:
+        print('Wandb disable for logging.')
+        os.environ["WANDB_MODE"] = "disabled"
+    else:
+        print('Using wandb for logging.')
+        os.environ["WANDB_MODE"] = "online"
 
     pl.seed_everything(shapenet_hypeyparams.seed)
 

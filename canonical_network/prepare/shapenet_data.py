@@ -4,7 +4,6 @@ import pytorch_lightning as pl
 import os
 import json
 import numpy as np
-from torch.utils.data import Dataset
 
 import canonical_network.utils as utils
 
