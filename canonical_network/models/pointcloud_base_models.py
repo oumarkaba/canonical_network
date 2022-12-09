@@ -90,8 +90,9 @@ class BasePointcloudModel(pl.LightningModule):
             trot = Rotate(R=random_rotations(points.shape[0]), device=self.device)
             points = trot.transform_points(points)
 
+        points = points.transpose(2, 1)
         ont_hot_labels = to_categorical(label, self.num_classes).type_as(label)
-        outputs = self(points.transpose(2, 1), ont_hot_labels)
+        outputs = self(points, ont_hot_labels)
         predictions = self.get_predictions(outputs)
 
         loss = self.get_loss(outputs, targets)
