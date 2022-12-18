@@ -11,7 +11,15 @@ from canonical_network.prepare.digits_data import DigitsDataModule
 from canonical_network.models.set_model import SET_HYPERPARAMS, SetModel
 from canonical_network.models.set_base_models import DeepSets, Transformer
 
-HYPERPARAMS = {"model": "set_model","batch_size": 64, "dryrun": True, "num_epochs": 500, "num_workers":0, "auto_tune":False, "seed": 0}
+HYPERPARAMS = {
+    "model": "transformer",
+    "batch_size": 64,
+    "dryrun": False,
+    "num_epochs": 500,
+    "num_workers": 0,
+    "auto_tune": False,
+    "seed": 0,
+}
 
 def train_digits():
     hyperparams = HYPERPARAMS | SET_HYPERPARAMS
@@ -33,13 +41,16 @@ def train_digits():
 
     model = {"set_model": lambda: SetModel(set_hypeyparams), "deepsets": lambda: DeepSets(set_hypeyparams), "transformer": lambda: Transformer(set_hypeyparams)}[set_hypeyparams.model]()
 
+    # accel = 'cpu' if set_hypeyparams.model != 'transformer' else 'auto'
+    accel = 'cpu'
+
     if set_hypeyparams.auto_tune:
-        trainer = pl.Trainer(fast_dev_run=set_hypeyparams.dryrun, max_epochs=set_hypeyparams.num_epochs, accelerator="auto", auto_scale_batch_size=True, auto_lr_find=True, logger=wandb_logger, callbacks=callbacks, deterministic=True)
+        trainer = pl.Trainer(fast_dev_run=set_hypeyparams.dryrun, max_epochs=set_hypeyparams.num_epochs, accelerator=accel, auto_scale_batch_size=True, auto_lr_find=True, logger=wandb_logger, callbacks=callbacks, deterministic=False)
         trainer.tune(model, datamodule=set_data)
     elif set_hypeyparams.dryrun:
-        trainer = pl.Trainer(fast_dev_run=set_hypeyparams.dryrun, max_epochs=set_hypeyparams.num_epochs, accelerator="auto", limit_train_batches=2, limit_val_batches=2, logger=wandb_logger, callbacks=callbacks, deterministic=True)
+        trainer = pl.Trainer(fast_dev_run=set_hypeyparams.dryrun, max_epochs=set_hypeyparams.num_epochs, accelerator=accel, limit_train_batches=2, limit_val_batches=2, logger=wandb_logger, callbacks=callbacks, deterministic=False)
     else:
-        trainer = pl.Trainer(fast_dev_run=set_hypeyparams.dryrun, max_epochs=set_hypeyparams.num_epochs, accelerator="auto", logger=wandb_logger, callbacks=callbacks, deterministic=True)
+        trainer = pl.Trainer(fast_dev_run=set_hypeyparams.dryrun, max_epochs=set_hypeyparams.num_epochs, accelerator=accel, logger=wandb_logger, callbacks=callbacks, deterministic=False)
 
     trainer.fit(model, datamodule=set_data)
 

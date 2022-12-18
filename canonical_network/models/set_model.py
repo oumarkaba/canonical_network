@@ -1,6 +1,5 @@
 from collections import namedtuple
 
-from turtle import forward
 import numpy as np
 import torch
 import torch.nn as nn

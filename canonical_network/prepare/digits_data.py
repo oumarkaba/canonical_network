@@ -139,7 +139,7 @@ def create_digits_datasets(
 
 
 def main():
-    create_digits_datasets(10, 10, "sum", 10000, 2000, 10000, "set")
+    create_digits_datasets(10, 10, "sum", 10000, 2000, 10000, "pad")
 
 
 if __name__ == "__main__":

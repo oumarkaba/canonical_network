@@ -35,6 +35,7 @@ class BaseSetModel(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         inputs, indices, targets = batch
+
         output = self(inputs, indices, batch_idx)
         predictions = self.get_predictions(output).squeeze()
 
@@ -48,10 +49,11 @@ class BaseSetModel(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         inputs, indices, targets = batch
+
         output = self(inputs, indices, batch_idx)
         predictions = self.get_predictions(output)
 
-        loss = F.binary_cross_entropy(predictions, targets.to(torch.float32))
+        loss = F.binary_cross_entropy(predictions.squeeze(), targets.to(torch.float32).squeeze())
         accuracy = tmf.accuracy(predictions, targets)
         f1_score = tmf.f1_score(predictions, targets)
 
