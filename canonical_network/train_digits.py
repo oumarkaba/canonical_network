@@ -16,7 +16,7 @@ def train_digits():
     hyperparams = HYPERPARAMS | SET_HYPERPARAMS
     wandb.login()
     wandb.init(config=hyperparams, project="canonical_network-digits")
-    wandb_logger = WandbLogger(project="canonical_network-digits", log_model="all")
+    wandb_logger = WandbLogger(project="canonical_network-digits")
 
     hyperparams = wandb.config
     set_hypeyparams = hyperparams

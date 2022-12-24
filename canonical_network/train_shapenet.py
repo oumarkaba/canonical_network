@@ -14,7 +14,7 @@ def train_pointnet():
     hyperparams = HYPERPARAMS | SHAPENET_HYPERPARAMS
     wandb.login()
     wandb.init(config=hyperparams, entity="symmetry_group", project="canonical_network-shapenet")
-    wandb_logger = WandbLogger(project="canonical_network-shapenet", log_model="all")
+    wandb_logger = WandbLogger(project="canonical_network-shapenet")
 
     hyperparams = wandb.config
     shapenet_hypeyparams = hyperparams

@@ -22,7 +22,7 @@ def train_nbody():
         
     wandb.login()
     wandb.init(config=hyperparams, entity="symmetry_group", project="canonical_network-nbody")
-    wandb_logger = WandbLogger(project="canonical_network-nbody", log_model="all")
+    wandb_logger = WandbLogger(project="canonical_network-nbody")
 
     hyperparams = wandb.config
     nbody_hypeyparams = hyperparams
