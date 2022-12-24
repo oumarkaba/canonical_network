@@ -8,7 +8,7 @@ from canonical_network.prepare.shapenet_data import ShapenetPartDataModule
 from canonical_network.models.pointcloud_model import SHAPENET_HYPERPARAMS, PointcloudModel
 from canonical_network.models.pointcloud_base_models import Pointnet, VNPointnet
 
-HYPERPARAMS = {"model": "pointcloud_model", "canon_model_type": "vn_pointnet", "pred_model_type": "DGCNN", "batch_size": 4, "dryrun": True, "use_wandb": False, "num_epochs": 500, "num_workers":0, "auto_tune":False, "seed": 0, "num_parts": 50, "num_classes": 16}
+HYPERPARAMS = {"model": "pointcloud_model", "canon_model_type": "vn_pointnet", "pred_model_type": "DGCNN", "batch_size": 4, "dryrun": True, "use_wandb": False, "checkpoint": False, "num_epochs": 500, "num_workers":0, "auto_tune":False, "seed": 0, "num_parts": 50, "num_classes": 16}
 
 def train_pointnet():
     hyperparams = HYPERPARAMS | SHAPENET_HYPERPARAMS
@@ -33,7 +33,7 @@ def train_pointnet():
     checkpoint_callback = ModelCheckpoint(dirpath="canonical_network/results/shapenet/model_saves", filename= shapenet_hypeyparams.model + "_" + wandb.run.name + "_{epoch}_{valid/mean_ious:.3f}", monitor="valid/mean_ious", mode="max")
     early_stop_metric_callback = EarlyStopping(monitor="valid/mean_ious", min_delta=0.0, patience=50, verbose=True, mode="max")
     early_stop_lr_callback = EarlyStopping(monitor="lr", min_delta=0.0, patience=10000, verbose=True, mode="min", stopping_threshold=1.1e-6)
-    callbacks = [checkpoint_callback, early_stop_lr_callback, early_stop_metric_callback]
+    callbacks = [checkpoint_callback, early_stop_lr_callback, early_stop_metric_callback] if shapenet_hypeyparams.checkpoint else [early_stop_lr_callback, early_stop_metric_callback]
 
     model = {"pointcloud_model": lambda: PointcloudModel(shapenet_hypeyparams), "pointnet": lambda: Pointnet(shapenet_hypeyparams), "vn_pointnet": lambda: VNPointnet(shapenet_hypeyparams)}[shapenet_hypeyparams.model]()
 
