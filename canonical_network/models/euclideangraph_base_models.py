@@ -106,7 +106,7 @@ class BaseEuclideangraphModel(pl.LightningModule):
         #     wandb.save(model_filename)
 
     def get_edges(self, batch_size, n_nodes):
-        edges = [torch.LongTensor(self.edges[0]), torch.LongTensor(self.edges[1])]
+        edges = [torch.LongTensor(self.edges[0]).to(self.device), torch.LongTensor(self.edges[1]).to(self.device)]
         if batch_size == 1:
             return edges
         elif batch_size > 1:
