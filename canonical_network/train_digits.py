@@ -26,7 +26,7 @@ def train_digits():
     set_data = DigitsDataModule(set_hypeyparams)
 
     checkpoint_callback = ModelCheckpoint(dirpath="canonical_network/results/digits/model_saves", filename= set_hypeyparams.model + "_" + wandb.run.name + "_{epoch}_{valid/f1_score:.3f}", monitor="valid/f1_score", mode="max")
-    early_stop_metric_callback = EarlyStopping(monitor="valid/f1_score", min_delta=0.0, patience=50, verbose=True, mode="max")
+    early_stop_metric_callback = EarlyStopping(monitor="valid/f1_score", min_delta=0.0, patience=500, verbose=True, mode="max")
     early_stop_lr_callback = EarlyStopping(monitor="lr", min_delta=0.0, patience=10000, verbose=True, mode="min", stopping_threshold=1.1e-6)
     callbacks = [checkpoint_callback, early_stop_lr_callback, early_stop_metric_callback] if set_hypeyparams.checkpoint else [early_stop_lr_callback, early_stop_metric_callback]
 
