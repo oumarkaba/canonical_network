@@ -31,7 +31,7 @@ def train_pointnet():
     shapenet_data = ShapenetPartDataModule(shapenet_hypeyparams)
 
     checkpoint_callback = ModelCheckpoint(dirpath="canonical_network/results/shapenet/model_saves", filename= shapenet_hypeyparams.model + "_" + wandb.run.name + "_{epoch}_{valid/mean_ious:.3f}", monitor="valid/mean_ious", mode="max")
-    early_stop_metric_callback = EarlyStopping(monitor="valid/mean_ious", min_delta=0.0, patience=500, verbose=True, mode="max")
+    early_stop_metric_callback = EarlyStopping(monitor="valid/mean_ious", min_delta=0.0, patience=600, verbose=True, mode="max")
     early_stop_lr_callback = EarlyStopping(monitor="lr", min_delta=0.0, patience=10000, verbose=True, mode="min", stopping_threshold=1.1e-6)
     callbacks = [checkpoint_callback, early_stop_lr_callback, early_stop_metric_callback] if shapenet_hypeyparams.checkpoint else [early_stop_lr_callback, early_stop_metric_callback]
 
