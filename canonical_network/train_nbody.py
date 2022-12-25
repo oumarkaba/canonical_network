@@ -32,7 +32,7 @@ def train_nbody():
     nbody_data = NBodyDataModule(nbody_hypeyparams)
 
     checkpoint_callback = ModelCheckpoint(dirpath="canonical_network/results/nbody/model_saves", filename= nbody_hypeyparams.model + "_" + wandb.run.name + "_{epoch}_{valid/loss:.3f}", monitor="valid/loss", mode="min")
-    early_stop_metric_callback = EarlyStopping(monitor="valid/loss", min_delta=0.0, patience=200, verbose=True, mode="min")
+    early_stop_metric_callback = EarlyStopping(monitor="valid/loss", min_delta=0.0, patience=600, verbose=True, mode="min")
     early_stop_lr_callback = EarlyStopping(monitor="lr", min_delta=0.0, patience=10000, verbose=True, mode="min", stopping_threshold=1.1e-6)
     callbacks = [checkpoint_callback, early_stop_lr_callback, early_stop_metric_callback] if nbody_hypeyparams.checkpoint else [early_stop_lr_callback, early_stop_metric_callback]
 
