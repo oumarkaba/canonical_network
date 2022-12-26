@@ -25,6 +25,7 @@ NBODY_HYPERPARAMS = {
     "canon_final_pooling": "mean",
     "canon_nonlinearity": "relu",
     "canon_angular_feature": 0,
+    "canon_dropout": 0.25,
 }
 
 
@@ -38,6 +39,7 @@ class EuclideangraphCanonFunction(pl.LightningModule):
         self.final_pooling = hyperparams.canon_final_pooling
         self.nonlinearity = hyperparams.canon_nonlinearity
         self.angular_feature = hyperparams.canon_angular_feature
+        self.dropout = hyperparams.canon_dropout
         self.batch_size = hyperparams.batch_size
 
         model_hyperparams = {
@@ -48,7 +50,8 @@ class EuclideangraphCanonFunction(pl.LightningModule):
             "out_dim": 4,
             "batch_size": self.batch_size,
             "nonlinearity": self.nonlinearity,
-            "angular_feature": self.angular_feature
+            "angular_feature": self.angular_feature,
+            "dropout": self.dropout,
         }
 
         self.model = {

@@ -188,11 +188,12 @@ class VNDeepSets(BaseEuclideangraphModel):
         self.num_layers = hyperparams.num_layers
         self.nonlinearity = hyperparams.nonlinearity
         self.angular_feature = hyperparams.angular_feature
+        self.dropout = hyperparams.dropout
         self.out_dim = hyperparams.out_dim
         self.in_dim = 4 if self.angular_feature else 3
         self.first_set_layer = VNDeepSetLayer(self.in_dim, self.hidden_dim, self.nonlinearity, self.layer_pooling, False)
         self.set_layers = SequentialMultiple(
-            *[VNDeepSetLayer(self.hidden_dim, self.hidden_dim, self.nonlinearity, self.layer_pooling) for i in range(self.num_layers - 1)]
+            *[VNDeepSetLayer(self.hidden_dim, self.hidden_dim, self.nonlinearity, self.layer_pooling, self.dropout) for i in range(self.num_layers - 1)]
         )
         self.output_layer = nn.Linear(self.hidden_dim, self.out_dim) if not self.out_dim == 1 else SequentialMultiple(nn.Linear(self.hidden_dim, self.out_dim), nn.Sigmoid())
         self.batch_size = hyperparams.batch_size
@@ -230,16 +231,19 @@ class VNDeepSets(BaseEuclideangraphModel):
 
 
 class VNDeepSetLayer(nn.Module):
-    def __init__(self, in_channels, out_channels, nonlinearity, pooling="sum", residual=True):
+    def __init__(self, in_channels, out_channels, nonlinearity, pooling="sum", residual=True, dropout=0.0):
         super().__init__()
         self.in_dim = in_channels
         self.out_dim = out_channels
         self.pooling = pooling
         self.residual = residual
         self.nonlinearity = nonlinearity
+        self.dropout = dropout
 
         self.identity_linear = nn.Linear(in_channels, out_channels)
         self.pooling_linear = nn.Linear(in_channels, out_channels)
+
+        self.dropout_layer = nn.Dropout(self.dropout)
 
         if self.nonlinearity == "softplus":
             self.nonlinear_function = VNSoftplus(out_channels, share_nonlinearity=False)
@@ -259,6 +263,9 @@ class VNDeepSetLayer(nn.Module):
         pooling = self.pooling_linear(pooled_set)
 
         output = self.nonlinear_function((identity + pooling).transpose(1,-1)).transpose(1,-1)
+
+        output = self.dropout_layer(output)
+
         if self.residual:
             output = output + x
 
