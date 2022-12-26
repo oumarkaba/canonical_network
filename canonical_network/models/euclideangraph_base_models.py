@@ -194,8 +194,10 @@ class VNDeepSets(BaseEuclideangraphModel):
         self.out_dim = hyperparams.out_dim
         self.in_dim = len(self.canon_feature)
         self.first_set_layer = VNDeepSetLayer(self.in_dim, self.hidden_dim, self.nonlinearity, self.layer_pooling, False)
+        self.in_dim = 4 if self.angular_feature else 3
+        self.first_set_layer = VNDeepSetLayer(self.in_dim, self.hidden_dim, self.nonlinearity, self.layer_pooling, False, dropout=self.dropout)
         self.set_layers = SequentialMultiple(
-            *[VNDeepSetLayer(self.hidden_dim, self.hidden_dim, self.nonlinearity, self.layer_pooling, self.dropout) for i in range(self.num_layers - 1)]
+            *[VNDeepSetLayer(self.hidden_dim, self.hidden_dim, self.nonlinearity, self.layer_pooling, dropout=self.dropout) for i in range(self.num_layers - 1)]
         )
         self.output_layer = nn.Linear(self.hidden_dim, self.out_dim) if not self.out_dim == 1 else SequentialMultiple(nn.Linear(self.hidden_dim, self.out_dim), nn.Sigmoid())
         self.batch_size = hyperparams.batch_size
