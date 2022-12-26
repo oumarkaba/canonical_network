@@ -24,7 +24,8 @@ NBODY_HYPERPARAMS = {
     "canon_layer_pooling": "mean",
     "canon_final_pooling": "mean",
     "canon_nonlinearity": "relu",
-    "canon_angular_feature": 0,
+    "canon_feature": "pva",
+    "canon_translation": False,
 }
 
 
@@ -37,8 +38,9 @@ class EuclideangraphCanonFunction(pl.LightningModule):
         self.layer_pooling = hyperparams.canon_layer_pooling
         self.final_pooling = hyperparams.canon_final_pooling
         self.nonlinearity = hyperparams.canon_nonlinearity
-        self.angular_feature = hyperparams.canon_angular_feature
+        self.canon_feature = hyperparams.canon_feature
         self.batch_size = hyperparams.batch_size
+        self.canon_translation = hyperparams.canon_translation
 
         model_hyperparams = {
             "num_layers": self.num_layers,
@@ -48,7 +50,8 @@ class EuclideangraphCanonFunction(pl.LightningModule):
             "out_dim": 4,
             "batch_size": self.batch_size,
             "nonlinearity": self.nonlinearity,
-            "angular_feature": self.angular_feature
+            "canon_feature": self.canon_feature,
+            "canon_translation": self.canon_translation
         }
 
         self.model = {
@@ -119,6 +122,7 @@ class EuclideanGraphModel(BaseEuclideangraphModel):
         super(EuclideanGraphModel, self).__init__(hyperparams)
         self.model = "euclideangraph_model"
         self.hyperparams = hyperparams
+        self.canon_translation = hyperparams.canon_translation
 
         self.canon_function = EuclideangraphCanonFunction(hyperparams)
         self.pred_function = EuclideangraphPredFunction(hyperparams)
@@ -126,9 +130,6 @@ class EuclideanGraphModel(BaseEuclideangraphModel):
     def forward(self, nodes, loc, edges, vel, edge_attr, charges):
         rotation_matrix, translation_vectors = self.canon_function(nodes, loc, edges, vel, edge_attr, charges)
         rotation_matrix_inverse = rotation_matrix.transpose(1, 2)
-
-        # test_rotation = rotation_matrix_inverse @ rotation_matrix
-        # test_det = torch.det(test_rotation)
 
         canonical_loc = (
             torch.bmm(loc[:, None, :], rotation_matrix_inverse).squeeze()
@@ -141,11 +142,5 @@ class EuclideanGraphModel(BaseEuclideangraphModel):
         position_prediction = (
             torch.bmm(position_prediction[:, None, :], rotation_matrix).squeeze() + translation_vectors
         )
-
-        position_prediction_2 = self.pred_function(nodes, loc, edges, vel, edge_attr, charges)
-
-        diff = position_prediction - position_prediction_2
-
-        diff_mean = torch.norm(diff, dim=1).mean()
 
         return position_prediction

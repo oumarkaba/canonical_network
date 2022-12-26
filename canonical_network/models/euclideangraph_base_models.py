@@ -187,9 +187,10 @@ class VNDeepSets(BaseEuclideangraphModel):
         self.final_pooling = hyperparams.final_pooling
         self.num_layers = hyperparams.num_layers
         self.nonlinearity = hyperparams.nonlinearity
-        self.angular_feature = hyperparams.angular_feature
+        self.canon_feature = hyperparams.canon_feature
+        self.canon_translation = hyperparams.canon_translation
         self.out_dim = hyperparams.out_dim
-        self.in_dim = 4 if self.angular_feature else 3
+        self.in_dim = len(self.canon_feature)
         self.first_set_layer = VNDeepSetLayer(self.in_dim, self.hidden_dim, self.nonlinearity, self.layer_pooling, False)
         self.set_layers = SequentialMultiple(
             *[VNDeepSetLayer(self.hidden_dim, self.hidden_dim, self.nonlinearity, self.layer_pooling) for i in range(self.num_layers - 1)]
@@ -206,11 +207,16 @@ class VNDeepSets(BaseEuclideangraphModel):
         mean_loc = ts.scatter(loc, batch_indices, 0, reduce=self.layer_pooling)
         mean_loc = mean_loc.repeat(5, 1, 1).transpose(0, 1).reshape(-1, 3)
         canonical_loc = loc - mean_loc
-        if self.angular_feature:
+        if self.canon_feature == "pv":
+            features = torch.stack([canonical_loc, vel], dim=2)
+        elif self.canon_feature == "pva":
             angular = torch.linalg.cross(canonical_loc, vel, dim=1)
-            features = torch.stack([canonical_loc, canonical_loc * charges, vel, angular], dim=2)
-        else:
-            features = torch.stack([canonical_loc, canonical_loc * charges, vel], dim=2)
+            features = torch.stack([canonical_loc, vel, angular], dim=2)
+        elif self.canon_feature == "pvc":
+            features = torch.stack([canonical_loc, vel, canonical_loc * charges], dim=2)
+        elif self.canon_feature == "pvac":
+            angular = torch.linalg.cross(canonical_loc, vel, dim=1)
+            features = torch.stack([canonical_loc, vel, angular, canonical_loc * charges], dim=2)
 
         x, _ = self.first_set_layer(features, edges)
         x, _ = self.set_layers(x, edges)
@@ -223,7 +229,7 @@ class VNDeepSets(BaseEuclideangraphModel):
         output = output.reshape(-1, 3, 4)
 
         rotation_vectors = output[:, :, :3]
-        translation_vectors = output[:, :, 3:]
+        translation_vectors = output[:, :, 3:] if self.canon_translation else 0.0
         translation_vectors =  translation_vectors + mean_loc[:, :, None]
 
         return rotation_vectors, translation_vectors.squeeze()

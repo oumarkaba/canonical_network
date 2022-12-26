@@ -40,11 +40,11 @@ def train_nbody():
 
     if nbody_hypeyparams.auto_tune:
         trainer = pl.Trainer(fast_dev_run=nbody_hypeyparams.dryrun, max_epochs=nbody_hypeyparams.num_epochs, accelerator="auto", auto_scale_batch_size=True, auto_lr_find=True, logger=wandb_logger, callbacks=callbacks, deterministic=False)
-        trainer.tune(model, datamodule=nbody_data)
+        trainer.tune(model, datamodule=nbody_data, enable_checkpointing=nbody_hypeyparams.checkpoint)
     elif nbody_hypeyparams.dryrun:
-        trainer = pl.Trainer(fast_dev_run=False, max_epochs=2, accelerator="auto", limit_train_batches=10, limit_val_batches=10, logger=wandb_logger, callbacks=callbacks, deterministic=False)
+        trainer = pl.Trainer(fast_dev_run=False, max_epochs=2, accelerator="auto", limit_train_batches=10, limit_val_batches=10, logger=wandb_logger, callbacks=callbacks, deterministic=False, enable_checkpointing=nbody_hypeyparams.checkpoint)
     else:
-        trainer = pl.Trainer(fast_dev_run=nbody_hypeyparams.dryrun, max_epochs=nbody_hypeyparams.num_epochs, accelerator="auto", logger=wandb_logger, callbacks=callbacks, deterministic=False)
+        trainer = pl.Trainer(fast_dev_run=nbody_hypeyparams.dryrun, max_epochs=nbody_hypeyparams.num_epochs, accelerator="auto", logger=wandb_logger, callbacks=callbacks, deterministic=False, enable_checkpointing=nbody_hypeyparams.checkpoint)
 
     trainer.fit(model, datamodule=nbody_data)
 
