@@ -9,10 +9,10 @@ import wandb
 import canonical_network.utils as utils
 from canonical_network.prepare.digits_data import DigitsDataModule
 from canonical_network.models.set_model import SET_HYPERPARAMS, SetModel
-from canonical_network.models.set_base_models import DeepSets, Transformer
+from canonical_network.models.set_base_models import DeepSets, Transformer, Permutation
 
 HYPERPARAMS = {
-    "model": "transformer",
+    "model": "permutation",
     "batch_size": 64,
     "dryrun": False,
     "num_epochs": 500,
@@ -39,7 +39,12 @@ def train_digits():
     early_stop_lr_callback = EarlyStopping(monitor="lr", min_delta=0.0, patience=10000, verbose=True, mode="min", stopping_threshold=1.1e-6)
     callbacks = [checkpoint_callback, early_stop_lr_callback, early_stop_metric_callback]
 
-    model = {"set_model": lambda: SetModel(set_hypeyparams), "deepsets": lambda: DeepSets(set_hypeyparams), "transformer": lambda: Transformer(set_hypeyparams)}[set_hypeyparams.model]()
+    model = {
+        "set_model": lambda: SetModel(set_hypeyparams),
+        "deepsets": lambda: DeepSets(set_hypeyparams),
+        "transformer": lambda: Transformer(set_hypeyparams),
+        "permutation": lambda: Permutation(set_hypeyparams),
+    }[set_hypeyparams.model]()
 
     # accel = 'cpu' if set_hypeyparams.model != 'transformer' else 'auto'
     accel = 'cpu'

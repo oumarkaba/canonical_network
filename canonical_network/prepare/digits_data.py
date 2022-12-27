@@ -82,7 +82,7 @@ class DigitsDataModule(pl.LightningDataModule):
         super().__init__()
         self.data_path = data_path
         self.hyperparams = hyperparams
-        self.mode = "pad" if hyperparams.model == "transformer" else "set"
+        self.mode = "pad" if hyperparams.model == "transformer" or 'permutation' else "set"
         self.collate_fn = utils.combine_set_data_sparse if self.mode == "set" else None
 
     def setup(self, stage=None):

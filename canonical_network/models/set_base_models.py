@@ -7,6 +7,9 @@ import pytorch_lightning as pl
 import torchmetrics.functional as tmf
 import wandb
 
+import torchsort
+
+
 class SequentialMultiple(nn.Sequential):
     def forward(self, *inputs):
         for module in self._modules.values():
@@ -80,7 +83,7 @@ class BaseSetModel(pl.LightningModule):
             model_filename = (
                 f"canonical_network/results/digits/onnx_models/{self.model}_{wandb.run.name}_{str(self.global_step)}.onnx"
             )
-            torch.onnx.export(self, (self.dummy_input, self.dummy_indices, 0.0), model_filename, opset_version=12)
+            # torch.onnx.export(self, (self.dummy_input, self.dummy_indices, 0.0), model_filename, opset_version=12)
             wandb.save(model_filename)
 
         self.logger.experiment.log(
@@ -156,6 +159,47 @@ class Transformer(BaseSetModel):
         # if self.final_pooling:
         #     x = ts.scatter(x, set_indices, reduce=self.final_pooling)
         output = self.output_layer(x).squeeze() * mask
+        print(output)
         return output
 
 
+class Permutation(BaseSetModel):
+    def __init__(self, hyperparams):
+        super().__init__(hyperparams)
+        self.model = 'permutation'
+        self.embedding_layer = nn.Embedding(self.num_embeddings, self.hidden_dim)
+        self.project_to_score = nn.Linear(self.hidden_dim, 1)
+        self.model = nn.Sequential(
+            nn.Linear(self.hidden_dim * 10, self.hidden_dim),
+            nn.ReLU(),
+            nn.Linear(self.hidden_dim, 10),
+        )
+        self.dummy_input = torch.zeros((1,10), device=self.device, dtype=torch.long)
+        self.dummy_indices = torch.ones((1,10), device=self.device, dtype=torch.long)
+    
+    def forward(self, x, mask, _):
+        embeddings = self.embedding_layer(x)
+        score = self.project_to_score(embeddings).squeeze(-1)
+        score = score + (1 - mask) * 1000
+
+        # print(score.size())
+        permutation = score.argsort(dim=1).unsqueeze(-1).expand_as(embeddings)
+        sorted = embeddings.gather(1, permutation)
+
+        # print(score)
+        rank = torchsort.soft_rank(score) - 1
+        # print(rank)
+        # print(mask)
+        rank = rank.unsqueeze(-1).expand_as(embeddings)
+        left_idx = rank.long()
+        right_idx = torch.min((left_idx + 1), mask.sum(dim=1, keepdim=True).unsqueeze(-1) - 1)
+        frac = rank.frac()
+        left = embeddings.gather(1, left_idx)
+        right = embeddings.gather(1, right_idx)
+        soft_sorted = (1 - frac) * left + frac * right
+
+        x = sorted + (soft_sorted - soft_sorted.detach())
+        x = x * mask.unsqueeze(-1)
+
+        x = self.model(x.flatten(1)).sigmoid() * mask
+        return x
