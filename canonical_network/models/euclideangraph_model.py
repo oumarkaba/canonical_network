@@ -24,10 +24,10 @@ NBODY_HYPERPARAMS = {
     "canon_layer_pooling": "mean",
     "canon_final_pooling": "mean",
     "canon_nonlinearity": "relu",
-    "canon_feature": "pva",
+    "canon_feature": "p",
     "canon_translation": False,
     "canon_angular_feature": 0,
-    "canon_dropout": 0.25,
+    "canon_dropout": 0.5,
 }
 
 

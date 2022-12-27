@@ -194,7 +194,7 @@ class VNDeepSets(BaseEuclideangraphModel):
         self.out_dim = hyperparams.out_dim
         self.in_dim = len(self.canon_feature)
         self.first_set_layer = VNDeepSetLayer(self.in_dim, self.hidden_dim, self.nonlinearity, self.layer_pooling, False)
-        self.in_dim = 4 if self.angular_feature else 3
+        self.in_dim = len(self.canon_feature)
         self.first_set_layer = VNDeepSetLayer(self.in_dim, self.hidden_dim, self.nonlinearity, self.layer_pooling, False, dropout=self.dropout)
         self.set_layers = SequentialMultiple(
             *[VNDeepSetLayer(self.hidden_dim, self.hidden_dim, self.nonlinearity, self.layer_pooling, dropout=self.dropout) for i in range(self.num_layers - 1)]
@@ -211,6 +211,8 @@ class VNDeepSets(BaseEuclideangraphModel):
         mean_loc = ts.scatter(loc, batch_indices, 0, reduce=self.layer_pooling)
         mean_loc = mean_loc.repeat(5, 1, 1).transpose(0, 1).reshape(-1, 3)
         canonical_loc = loc - mean_loc
+        if self.canon_feature == "p":
+            features = torch.stack([canonical_loc], dim=2)
         if self.canon_feature == "pv":
             features = torch.stack([canonical_loc, vel], dim=2)
         elif self.canon_feature == "pva":
