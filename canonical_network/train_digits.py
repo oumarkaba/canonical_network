@@ -1,4 +1,3 @@
-from asyncio.log import logger
 import torch
 from torch.utils.data import DataLoader
 import pytorch_lightning as pl
@@ -11,13 +10,13 @@ from canonical_network.prepare.digits_data import DigitsDataModule
 from canonical_network.models.set_model import SET_HYPERPARAMS, SetModel
 from canonical_network.models.set_base_models import DeepSets, Transformer
 
-HYPERPARAMS = {"model": "set_model","batch_size": 64, "dryrun": True, "num_epochs": 500, "num_workers":0, "auto_tune":False, "seed": 0}
+HYPERPARAMS = {"model": "set_model","batch_size": 64, "dryrun": True, "num_epochs": 500, "num_workers":0, "checkpoint": False, "auto_tune":False, "seed": 0}
 
 def train_digits():
     hyperparams = HYPERPARAMS | SET_HYPERPARAMS
     wandb.login()
     wandb.init(config=hyperparams, project="canonical_network-digits")
-    wandb_logger = WandbLogger(project="canonical_network-digits", log_model="all")
+    wandb_logger = WandbLogger(project="canonical_network-digits")
 
     hyperparams = wandb.config
     set_hypeyparams = hyperparams
@@ -27,9 +26,9 @@ def train_digits():
     set_data = DigitsDataModule(set_hypeyparams)
 
     checkpoint_callback = ModelCheckpoint(dirpath="canonical_network/results/digits/model_saves", filename= set_hypeyparams.model + "_" + wandb.run.name + "_{epoch}_{valid/f1_score:.3f}", monitor="valid/f1_score", mode="max")
-    early_stop_metric_callback = EarlyStopping(monitor="valid/f1_score", min_delta=0.0, patience=50, verbose=True, mode="max")
+    early_stop_metric_callback = EarlyStopping(monitor="valid/f1_score", min_delta=0.0, patience=500, verbose=True, mode="max")
     early_stop_lr_callback = EarlyStopping(monitor="lr", min_delta=0.0, patience=10000, verbose=True, mode="min", stopping_threshold=1.1e-6)
-    callbacks = [checkpoint_callback, early_stop_lr_callback, early_stop_metric_callback]
+    callbacks = [checkpoint_callback, early_stop_lr_callback, early_stop_metric_callback] if set_hypeyparams.checkpoint else [early_stop_lr_callback, early_stop_metric_callback]
 
     model = {"set_model": lambda: SetModel(set_hypeyparams), "deepsets": lambda: DeepSets(set_hypeyparams), "transformer": lambda: Transformer(set_hypeyparams)}[set_hypeyparams.model]()
 

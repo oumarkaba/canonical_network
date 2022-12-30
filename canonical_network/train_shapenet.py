@@ -8,6 +8,7 @@ from canonical_network.prepare.shapenet_data import ShapenetPartDataModule
 from canonical_network.models.pointcloud_models import Pointnet, VNPointnet, DGCNN, EquivariantPointcloudModel
 import torch
 
+
 def get_hyperparams():
     parser = ArgumentParser()
     parser.add_argument("--model", type=str, default="equivariant_pointcloud_model",

@@ -8,7 +8,10 @@ wandb
 *.egg-info
 *.pyc
 lightning_logs
-
+*.out
+canonical_network-nbody
+cub-1.10.0
+output_files
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
