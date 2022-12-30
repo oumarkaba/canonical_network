@@ -7,9 +7,11 @@ import pytorch_lightning as pl
 from pytorch3d.transforms import RotateAxisAngle, Rotate, random_rotations
 import torchmetrics.functional as tmf
 import wandb
+from torch.optim.lr_scheduler import ReduceLROnPlateau, CosineAnnealingLR, MultiStepLR
 
+from canonical_network.utils import *
+from canonical_network.models.pointcloud_networks import STNkd, STN3d, VNSTNkd, Transform_Net, VNPointnetSmall
 from canonical_network.models.vn_layers import *
-from canonical_network.utils import to_categorical
 
 SEGMENTATION_CLASSES = {
     "Earphone": [16, 17, 18],
@@ -29,10 +31,15 @@ SEGMENTATION_CLASSES = {
     "Chair": [12, 13, 14, 15],
     "Knife": [22, 23],
 }
+
 SEGMENTATION_LABEL_TO_PART = {} # {0:Airplane, 1:Airplane, ...49:Table}
 for cat in SEGMENTATION_CLASSES.keys():
     for label in SEGMENTATION_CLASSES[cat]:
         SEGMENTATION_LABEL_TO_PART[label] = cat
+
+LEARNING_RATE_CLIP = 1e-5
+MOMENTUM_ORIGINAL = 0.1
+MOMENTUM_DECCAY = 0.5
 
 
 class BasePointcloudModel(pl.LightningModule):
@@ -44,50 +51,104 @@ class BasePointcloudModel(pl.LightningModule):
         self.valid_rotation = hyperparams.valid_rotation
         self.num_points = hyperparams.num_points
         self.learning_rate = hyperparams.learning_rate if hasattr(hyperparams, "learning_rate") else None
-
-        self.dummy_input = torch.zeros(2, 3, self.num_points, device=self.device, dtype=torch.float)
-        self.dummy_indices = torch.zeros(2, 1, self.num_classes, device=self.device, dtype=torch.long)
-
-        self.shape_ious = {cat: [] for cat in SEGMENTATION_CLASSES.keys()}
+        self.hyperparams = hyperparams
 
     def get_predictions(self, outputs):
         if type(outputs) == list:
             return torch.cat(outputs, dim=0)
         return outputs
 
+    def configure_optimizers(self):
+        if self.hyperparams.optimizer == "Adam":
+            optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate, weight_decay=self.hyperparams.decay_rate)
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer, patience=10, factor=0.5, min_lr=1e-6, mode="min"
+            )
+            print("Using Adam optimizer")
+            return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": "train/loss"}
+        elif self.hyperparams.optimizer == "SGD":
+            self.learning_rate *= 100
+            optimizer = torch.optim.SGD(self.parameters(), lr=self.learning_rate, momentum=0.9, weight_decay=self.hyperparams.decay_rate)
+            print("Using SGD optimizer with custom learning rate scheduler")
+            return optimizer
+        elif self.hyperparams.optimizer == "SGD_built_in":
+            self.learning_rate *= 100
+            optimizer = torch.optim.SGD(self.parameters(), lr=self.learning_rate, momentum=0.9, weight_decay=self.hyperparams.decay_rate)
+            if self.hyperparams.decay_type == "cosine":
+                scheduler = CosineAnnealingLR(optimizer, T_max=self.hyperparams.num_epochs, eta_min=1e-3)
+            elif self.hyperparams.decay_type == "step":
+                scheduler = MultiStepLR(optimizer,
+                                        milestones=[self.trainer.max_epochs // 6, self.trainer.max_epochs // 3,
+                                                    self.trainer.max_epochs // 2], gamma=0.1)
+            else:
+                raise NotImplementedError(f"Unknown learning rate decay {self.hyperparams.decay_type}")
+            scheduler_dict = {
+                "scheduler": scheduler,
+                "interval": "epoch",
+            }
+            print(f"Using SGD optimizer with {self.hyperparams.lr_decay} learning rate scheduler")
+            return {"optimizer": optimizer, "lr_scheduler": scheduler_dict}
+        else:
+            raise NotImplementedError
+
+    def on_train_epoch_start(self):
+        if self.hyperparams.optimizer == "SGD":
+            lr = max(self.learning_rate * (self.hyperparams.lr_decay ** (self.current_epoch // self.hyperparams.step_size)), LEARNING_RATE_CLIP)
+            for param_group in self.optimizers().param_groups:
+                param_group['lr'] = lr
+            momentum = max(MOMENTUM_ORIGINAL * (MOMENTUM_DECCAY ** (self.current_epoch // self.hyperparams.step_size)), 0.01)
+            self.apply(lambda x: bn_momentum_adjust(x, momentum))
+        lr = self.optimizers().param_groups[0]['lr']
+        print(f"Learning rate in epoch {self.current_epoch} is {lr}")
+
     def training_step(self, batch, batch_idx):
         points, label, targets = batch
         points, label, targets = points.float(), label.long(), targets.long()
 
+        # Augmentations
+        trot = None
         if self.train_rotation == "z":
             trot = RotateAxisAngle(angle=torch.rand(points.shape[0]) * 360, axis="Z", degrees=True, device=self.device)
-            points = trot.transform_points(points)
         elif self.train_rotation == "so3":
             trot = Rotate(R=random_rotations(points.shape[0]), device=self.device)
+        if trot is not None:
             points = trot.transform_points(points)
-
+        if self.hyperparams.augment_train_data:
+            points = random_scale_point_cloud(points)
+            points = random_shift_point_cloud(points)
         points = points.transpose(2, 1)
+
+        # Forward pass
         ont_hot_labels = to_categorical(label, self.num_classes).type_as(label)
         outputs = self(points, ont_hot_labels)
         predictions = self.get_predictions(outputs).squeeze()
 
+        # Loss
         loss = self.get_loss(outputs, targets)
-        accuracy = tmf.accuracy(predictions.permute(0, 2, 1), targets)
+        # accuracy = tmf.accuracy(predictions.permute(0, 2, 1), targets)
 
-        metrics = {"train/loss": loss, "train/accuracy": accuracy}
-        self.log_dict(metrics, on_epoch=True)
+        metrics = {"train/loss": loss}
+        self.log_dict(metrics, on_epoch=True, prog_bar=True)
 
         return loss
+
+    def on_validation_start(self):
+        self.total_correct = 0
+        self.total_seen = 0
+        self.total_seen_class = [0 for _ in range(self.num_parts)]
+        self.total_correct_class = [0 for _ in range(self.num_parts)]
+        self.shape_ious = {cat: [] for cat in SEGMENTATION_CLASSES.keys()}
 
     def validation_step(self, batch, batch_idx):
         points, label, targets = batch
         points, label, targets = points.float(), label.long(), targets.long()
 
+        trot = None
         if self.valid_rotation == "z":
             trot = RotateAxisAngle(angle=torch.rand(points.shape[0]) * 360, axis="Z", degrees=True, device=self.device)
-            points = trot.transform_points(points)
         elif self.valid_rotation == "so3":
             trot = Rotate(R=random_rotations(points.shape[0]), device=self.device)
+        if trot is not None:
             points = trot.transform_points(points)
 
         points = points.transpose(2, 1)
@@ -96,42 +157,28 @@ class BasePointcloudModel(pl.LightningModule):
         predictions = self.get_predictions(outputs)
 
         loss = self.get_loss(outputs, targets)
-        accuracy = tmf.accuracy(predictions.permute(0, 2, 1), targets)
-        self.update_cat_ious(points, predictions, targets)
+        self.append_to_metric_lists(points, predictions, targets)
 
         if self.global_step == 0:
             wandb.define_metric("valid/loss", summary="min")
-            wandb.define_metric("valid/accuracy", summary="max")
 
-        metrics = {"valid/loss": loss, "valid/accuracy": accuracy}
+        metrics = {"valid/loss": loss}
         self.log_dict(metrics, prog_bar=True)
         return outputs
 
-    def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate, weight_decay=1e-4)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, patience=20, factor=0.5, min_lr=1e-6, mode="max"
-        )
-        return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": "valid/mean_ious"}
-
-    def validation_epoch_end(self, validation_step_outputs):
-        scheduler = self.lr_schedulers()
-        self.log("lr", scheduler.optimizer.param_groups[0]["lr"])
+    def validation_epoch_end(self, outputs):
 
         if self.global_step == 0:
-            wandb.define_metric("valid/mean_ious", summary="max")
+            wandb.define_metric("valid/class_avg_iou", summary="max")
+            wandb.define_metric("valid/instance_avg_iou", summary="max")
+            wandb.define_metric("valid/accuracy", summary="max")
         
-        mean_ious = self.get_mean_ious()
-        self.log_dict({"valid/mean_ious": mean_ious}, prog_bar=True)
-        self.shape_ious = {cat: [] for cat in SEGMENTATION_CLASSES.keys()}
+        accuracy, class_avg_accuracy, class_avg_iou, instance_avg_iou = self.get_metrics()
+        self.log_dict(
+            {"valid/accuracy": accuracy, "valid/class_avg_iou": class_avg_iou, "valid/instance_avg_iou": instance_avg_iou},
+            prog_bar=True)
 
-        predictions = self.get_predictions(validation_step_outputs)
-        if self.current_epoch == 0:
-            model_filename = f"canonical_network/results/shapenet/onnx_models/{self.model}_{wandb.run.name}_{str(self.global_step)}.onnx"
-            if self.model == "pointnet":
-                torch.onnx.export(self, (self.dummy_input.to(self.device), self.dummy_indices.to(self.device)), model_filename, opset_version=15)
-            wandb.save(model_filename)
-
+        predictions = self.get_predictions(outputs)
         self.logger.experiment.log(
             {
                 "valid/logits": wandb.Histogram(predictions.to("cpu")),
@@ -143,8 +190,8 @@ class BasePointcloudModel(pl.LightningModule):
         predictions = self.get_predictions(outputs).squeeze()
         return F.nll_loss(predictions.permute(0, 2, 1), targets)
 
-    def update_cat_ious(self, points, predictions, targets):
-        cur_batch_size, NUM_POINT, _ = points.size()
+    def append_to_metric_lists(self, points, predictions, targets):
+        cur_batch_size, _, NUM_POINT = points.shape
 
         cur_pred_val = predictions.cpu().data.numpy()
         cur_pred_val_logits = cur_pred_val
@@ -154,6 +201,14 @@ class BasePointcloudModel(pl.LightningModule):
             cat = SEGMENTATION_LABEL_TO_PART[targets[i, 0]]
             logits = cur_pred_val_logits[i, :, :]
             cur_pred_val[i, :] = np.argmax(logits[:, SEGMENTATION_CLASSES[cat]], 1) + SEGMENTATION_CLASSES[cat][0]
+
+        correct = np.sum(cur_pred_val == targets)
+        self.total_correct += correct
+        self.total_seen += (cur_batch_size * NUM_POINT)
+
+        for l in range(self.num_parts):
+            self.total_seen_class[l] += np.sum(targets == l)
+            self.total_correct_class[l] += (np.sum((cur_pred_val == l) & (targets == l)))
 
         for i in range(cur_batch_size):
             segp = cur_pred_val[i, :]
@@ -169,14 +224,18 @@ class BasePointcloudModel(pl.LightningModule):
                     )
             self.shape_ious[cat].append(np.mean(part_ious))
 
-    def get_mean_ious(self):
+    def get_metrics(self):
         all_shape_ious = []
         for cat in self.shape_ious.keys():
             for iou in self.shape_ious[cat]:
                 all_shape_ious.append(iou)
             self.shape_ious[cat] = np.mean(self.shape_ious[cat])
         mean_shape_ious = np.mean(list(self.shape_ious.values()))
-        return mean_shape_ious
+        accuracy = self.total_correct / float(self.total_seen)
+        class_avg_accuracies = np.mean(np.array(self.total_correct_class) / np.array(self.total_seen_class, dtype=np.float))
+        class_avg_ious = mean_shape_ious
+        instance_avg_iou = np.mean(all_shape_ious)
+        return accuracy, class_avg_accuracies, class_avg_ious, instance_avg_iou
 
 
 class Pointnet(BasePointcloudModel):
@@ -266,7 +325,7 @@ class Pointnet(BasePointcloudModel):
         transformation_matrix = outputs[1]
 
         transformation_loss = (
-            self.regularization_transform * self.feature_transform_reguliarzer(transformation_matrix)
+            self.regularization_transform * self.feature_transform_regularizer(transformation_matrix)
             if self.regularization_transform
             else 0
         )
@@ -274,7 +333,7 @@ class Pointnet(BasePointcloudModel):
 
         return total_loss
 
-    def feature_transform_reguliarzer(self, trans):
+    def feature_transform_regularizer(self, trans):
         d = trans.size()[1]
         I = torch.eye(d)[None, :, :]
         if trans.is_cuda:
@@ -290,6 +349,7 @@ class DGCNN(BasePointcloudModel):
         self.normal_channel = hyperparams.normal_channel
         self.regularization_transform = hyperparams.regularization_transform
         self.n_knn = hyperparams.n_knn
+        self.transform_net = Transform_Net(hyperparams)
         
         self.bn1 = nn.BatchNorm2d(64)
         self.bn2 = nn.BatchNorm2d(64)
@@ -319,6 +379,7 @@ class DGCNN(BasePointcloudModel):
                                    nn.LeakyReLU(negative_slope=0.2))
         self.conv6 = nn.Sequential(nn.Conv1d(192, 1024, kernel_size=1, bias=False),
                                    self.bn6,
+
                                    nn.LeakyReLU(negative_slope=0.2))
         self.conv7 = nn.Sequential(nn.Conv1d(16, 64, kernel_size=1, bias=False),
                                    self.bn7,
@@ -335,12 +396,16 @@ class DGCNN(BasePointcloudModel):
                                    self.bn10,
                                    nn.LeakyReLU(negative_slope=0.2))
         self.conv11 = nn.Conv1d(128, self.num_parts, kernel_size=1, bias=False)
-        
 
     def forward(self, x, l):
-        B, D, N = x.size()
-        batch_size = x.size(0)
-        num_points = x.size(2)
+
+        batch_size, _, num_points = x.shape
+
+        x0 = get_graph_feature(x, k=self.n_knn)
+        t = self.transform_net(x0)
+        x = x.transpose(2, 1)
+        x = torch.bmm(x, t)
+        x = x.transpose(2, 1)
 
         x = get_graph_feature(x, k=self.n_knn)
         x = self.conv1(x)
@@ -379,16 +444,79 @@ class DGCNN(BasePointcloudModel):
         x = x.transpose(1, 2).contiguous()
 
         net = F.log_softmax(x.view(-1, self.num_parts), dim=-1)
-        net = net.view(B, N, self.num_parts)  # [B, N, 50]
+        net = net.view(batch_size, num_points, self.num_parts)  # [B, N, 50]
         
         trans_feat = None
         return net, trans_feat
 
+    def get_predictions(self, outputs):
+        if type(outputs) == list:
+            outputs = list(zip(*outputs))
+            return torch.cat(outputs[0], dim=0)
+        return outputs[0]
+
+
+class PointcloudCanonFunction(pl.LightningModule):
+    def __init__(self, hyperparams):
+        super().__init__()
+        self.model_type = hyperparams.canon_model_type
+        self.model = {"vn_pointnet": lambda: VNPointnetSmall(hyperparams)}[self.model_type]()
+
+    def forward(self, points, labels):
+        vectors = self.model(points, labels)
+        rotation_vectors = vectors[:, :3]
+        translation_vectors = vectors[:, 3:]
+
+        rotation_matrix = self.gram_schmidt(rotation_vectors)
+        return rotation_matrix, translation_vectors
+
+    def gram_schmidt(self, vectors):
+        v1 = vectors[:, 0]
+        v1 = v1 / torch.norm(v1, dim=1, keepdim=True)
+        v2 = (vectors[:, 1] - torch.sum(vectors[:, 1] * v1, dim=1, keepdim=True) * v1)
+        v2 = v2 / torch.norm(v2, dim=1, keepdim=True)
+        v3 = (vectors[:, 2] - torch.sum(vectors[:, 2] * v1, dim=1, keepdim=True) * v1 - torch.sum(vectors[:, 2] * v2,
+                                                                                                  dim=1,
+                                                                                                  keepdim=True) * v2)
+        v3 = v3 / torch.norm(v3, dim=1, keepdim=True)
+        return torch.stack([v1, v2, v3], dim=1)
+
+
+class PointcloudPredFunction(pl.LightningModule):
+    def __init__(self, hyperparams):
+        super().__init__()
+        self.model_type = hyperparams.pred_model_type
+        self.model = {"pointnet": lambda: Pointnet(hyperparams),
+                      "DGCNN": lambda: DGCNN(hyperparams)}[self.model_type]()
+
+    def forward(self, points, labels):
+        return self.model(points, labels)
+
+
+class EquivariantPointcloudModel(BasePointcloudModel):
+    def __init__(self, hyperparams):
+        super(EquivariantPointcloudModel, self).__init__(hyperparams)
+        self.model = hyperparams.model
+        self.hyperparams = hyperparams
+        self.num_parts = hyperparams.num_parts
+
+        self.canon_function = PointcloudCanonFunction(hyperparams)
+        self.pred_function = PointcloudPredFunction(hyperparams)
+
+    def forward(self, point_cloud, label):
+        rotation_matrix, translation_vectors = self.canon_function(point_cloud, label)
+        rotation_matrix_inverse = rotation_matrix.transpose(1, 2)
+
+        # not applying translations
+        canonical_point_cloud = torch.bmm(point_cloud.transpose(1, 2), rotation_matrix_inverse)
+        canonical_point_cloud = canonical_point_cloud.transpose(1, 2)
+
+        return self.pred_function(canonical_point_cloud, label)[0], rotation_matrix
 
     def get_predictions(self, outputs):
         if type(outputs) == list:
             outputs = list(zip(*outputs))
-            return torch.cat(outputs, dim=0)
+            return torch.cat(outputs[0], dim=0)
         return outputs[0]
 
 
@@ -475,234 +603,7 @@ class VNPointnet(BasePointcloudModel):
         return net
 
 
-class VNPointnetSmall(pl.LightningModule):
-    def __init__(self, hyperparams):
-        super(VNPointnetSmall, self).__init__()
-        self.model = "vn_pointnet"
-        self.n_knn = hyperparams.n_knn
-        self.normal_channel = hyperparams.normal_channel
-        self.num_parts = hyperparams.num_parts
-        self.num_classes = hyperparams.num_classes
-        self.pooling = hyperparams.pooling
-        if self.normal_channel:
-            channel = 6
-        else:
-            channel = 3
-
-        self.conv_pos = VNLinearLeakyReLU(3, 64 // 3, dim=5, negative_slope=0.0)
-        self.conv1 = VNLinearLeakyReLU(64 // 3, 64 // 3, dim=4, negative_slope=0.0)
-        self.conv2 = VNLinearLeakyReLU(64 // 3, 128 // 3, dim=4, negative_slope=0.0)
-        self.conv4 = VNLinearLeakyReLU(128 // 3 * 2, 256 // 3, dim=4, negative_slope=0.0)
-
-        self.conv5 = VNLinearLeakyReLU(256 // 3, 256 // 3, dim=4, negative_slope=0.0)
-        self.bn5 = VNBatchNorm(256 // 3, dim=4)
-
-        self.conv6 = VNBilinear(256 // 3, self.num_classes, 12 // 3)
-
-        if self.pooling == "max":
-            self.pool = VNMaxPool(64 // 3)
-        elif self.pooling == "mean":
-            self.pool = mean_pool
-
-        self.fstn = VNSTNkd(hyperparams, d=128 // 3)
-
-    def forward(self, point_cloud, labels):
-        B, D, N = point_cloud.size()
-
-        point_cloud = point_cloud.unsqueeze(1)
-        feat = get_graph_feature_cross(point_cloud, k=self.n_knn)
-        point_cloud = self.conv_pos(feat)
-        point_cloud = self.pool(point_cloud)
-
-        out1 = self.conv1(point_cloud)
-        out2 = self.conv2(out1)
-
-        net_global = self.fstn(out2).unsqueeze(-1).repeat(1, 1, 1, N)
-        net_transformed = torch.cat((out2, net_global), 1)
-
-        out4 = self.conv4(net_transformed)
-        out5 = self.bn5(self.conv5(out4))
-
-        out5_mean = out5.mean(dim=-1, keepdim=False)
-
-        out = self.conv6(out5_mean, labels)
-
-        return out
 
 
-class STN3d(pl.LightningModule):
-    def __init__(self, channel):
-        super(STN3d, self).__init__()
-        self.conv1 = torch.nn.Conv1d(channel, 64, 1)
-        self.conv2 = torch.nn.Conv1d(64, 128, 1)
-        self.conv3 = torch.nn.Conv1d(128, 1024, 1)
-        self.fc1 = nn.Linear(1024, 512)
-        self.fc2 = nn.Linear(512, 256)
-        self.fc3 = nn.Linear(256, 9)
-        self.relu = nn.ReLU()
-
-        self.bn1 = nn.BatchNorm1d(64)
-        self.bn2 = nn.BatchNorm1d(128)
-        self.bn3 = nn.BatchNorm1d(1024)
-        self.bn4 = nn.BatchNorm1d(512)
-        self.bn5 = nn.BatchNorm1d(256)
-
-    def forward(self, x):
-        batchsize = x.size()[0]
-        x = F.relu(self.bn1(self.conv1(x)))
-        x = F.relu(self.bn2(self.conv2(x)))
-        x = F.relu(self.bn3(self.conv3(x)))
-        x = torch.max(x, 2, keepdim=True)[0]
-        x = x.view(-1, 1024)
-
-        x = F.relu(self.bn4(self.fc1(x)))
-        x = F.relu(self.bn5(self.fc2(x)))
-        x = self.fc3(x)
-
-        iden = (
-            Variable(torch.from_numpy(np.array([1, 0, 0, 0, 1, 0, 0, 0, 1]).astype(np.float32)))
-            .view(1, 9)
-            .repeat(batchsize, 1)
-        )
-        if x.is_cuda:
-            iden = iden.cuda()
-        x = x + iden
-        x = x.view(-1, 3, 3)
-        return x
 
 
-class STNkd(pl.LightningModule):
-    def __init__(self, k=64):
-        super(STNkd, self).__init__()
-        self.conv1 = torch.nn.Conv1d(k, 64, 1)
-        self.conv2 = torch.nn.Conv1d(64, 128, 1)
-        self.conv3 = torch.nn.Conv1d(128, 1024, 1)
-        self.fc1 = nn.Linear(1024, 512)
-        self.fc2 = nn.Linear(512, 256)
-        self.fc3 = nn.Linear(256, k * k)
-        self.relu = nn.ReLU()
-
-        self.bn1 = nn.BatchNorm1d(64)
-        self.bn2 = nn.BatchNorm1d(128)
-        self.bn3 = nn.BatchNorm1d(1024)
-        self.bn4 = nn.BatchNorm1d(512)
-        self.bn5 = nn.BatchNorm1d(256)
-
-        self.k = k
-
-    def forward(self, x):
-        batchsize = x.size()[0]
-        x = F.relu(self.bn1(self.conv1(x)))
-        x = F.relu(self.bn2(self.conv2(x)))
-        x = F.relu(self.bn3(self.conv3(x)))
-        x = torch.max(x, 2, keepdim=True)[0]
-        x = x.view(-1, 1024)
-
-        x = F.relu(self.bn4(self.fc1(x)))
-        x = F.relu(self.bn5(self.fc2(x)))
-        x = self.fc3(x)
-
-        iden = (
-            Variable(torch.from_numpy(np.eye(self.k).flatten().astype(np.float32)))
-            .view(1, self.k * self.k)
-            .repeat(batchsize, 1)
-        )
-        if x.is_cuda:
-            iden = iden.cuda()
-        x = x + iden
-        x = x.view(-1, self.k, self.k)
-        return x
-
-
-class VNSTNkd(pl.LightningModule):
-    def __init__(self, hyperparams, d):
-        super(VNSTNkd, self).__init__()
-        self.conv1 = VNLinearLeakyReLU(d, 64 // 3, dim=4, negative_slope=0.0)
-        self.conv2 = VNLinearLeakyReLU(64 // 3, 128 // 3, dim=4, negative_slope=0.0)
-        self.conv3 = VNLinearLeakyReLU(128 // 3, 1024 // 3, dim=4, negative_slope=0.0)
-
-        self.fc1 = VNLinearLeakyReLU(1024 // 3, 512 // 3, dim=3, negative_slope=0.0)
-        self.fc2 = VNLinearLeakyReLU(512 // 3, 256 // 3, dim=3, negative_slope=0.0)
-
-        if hyperparams.pooling == "max":
-            self.pool = VNMaxPool(1024 // 3)
-        elif hyperparams.pooling == "mean":
-            self.pool = mean_pool
-
-        self.fc3 = VNLinear(256 // 3, d)
-
-    def forward(self, x):
-        batchsize = x.size()[0]
-        x = self.conv1(x)
-        x = self.conv2(x)
-        x = self.conv3(x)
-        x = self.pool(x)
-
-        x = self.fc1(x)
-        x = self.fc2(x)
-        x = self.fc3(x)
-
-        return x
-
-
-def knn(x, k):
-    inner = -2 * torch.matmul(x.transpose(2, 1), x)
-    xx = torch.sum(x ** 2, dim=1, keepdim=True)
-    pairwise_distance = -xx - inner - xx.transpose(2, 1)
-
-    idx = pairwise_distance.topk(k=k, dim=-1)[1]  # (batch_size, num_points, k)
-    return idx
-
-
-def get_graph_feature(x, k=20, idx=None, x_coord=None):
-    batch_size = x.size(0)
-    num_points = x.size(2)
-    x = x.view(batch_size, -1, num_points)
-    if idx is None:
-        if x_coord is None: # dynamic knn graph
-            idx = knn(x, k=k)
-        else:          # fixed knn graph with input point coordinates
-            idx = knn(x_coord, k=k)
-
-    idx_base = torch.arange(0, batch_size).type_as(idx).view(-1, 1, 1) * num_points
-
-    idx = idx + idx_base
-
-    idx = idx.view(-1)
- 
-    _, num_dims, _ = x.size()
-
-    x = x.transpose(2, 1).contiguous()   # (batch_size, num_points, num_dims)  -> (batch_size*num_points, num_dims) #   batch_size * num_points * k + range(0, batch_size*num_points)
-    feature = x.view(batch_size*num_points, -1)[idx, :]
-    feature = feature.view(batch_size, num_points, k, num_dims) 
-    x = x.view(batch_size, num_points, 1, num_dims).repeat(1, 1, k, 1)
-    
-    feature = torch.cat((feature-x, x), dim=3).permute(0, 3, 1, 2).contiguous()
-  
-    return feature
-
-def get_graph_feature_cross(x, k=20, idx=None):
-    batch_size = x.size(0)
-    num_points = x.size(3)
-    x = x.view(batch_size, -1, num_points)
-    if idx is None:
-        idx = knn(x, k=k)
-
-    idx_base = torch.arange(0, batch_size).type_as(idx).view(-1, 1, 1) * num_points
-
-    idx = idx + idx_base
-
-    idx = idx.view(-1)
-
-    _, num_dims, _ = x.size()
-    num_dims = num_dims // 3
-
-    x = x.transpose(2, 1).contiguous()
-    feature = x.view(batch_size * num_points, -1)[idx, :]
-    feature = feature.view(batch_size, num_points, k, num_dims, 3)
-    x = x.view(batch_size, num_points, 1, num_dims, 3).repeat(1, 1, k, 1, 1)
-    cross = torch.cross(feature, x, dim=-1)
-
-    feature = torch.cat((feature - x, x, cross), dim=3).permute(0, 3, 4, 1, 2).contiguous()
-
-    return feature

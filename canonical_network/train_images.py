@@ -15,6 +15,8 @@ def get_hyperparams():
     parser.add_argument("--model", type=str, default="vanilla", help="model to train 1) vanilla 2) equivariant")
     parser.add_argument("--base_encoder", type=str, default="cnn",
                         help="base encoder to use for the model 1)cnn 2)resnet18 3)resnet50 4)resnet101 5)vit 6)rotation_eqv_cnn 7)rotoreflection_eqv_cnn")
+    parser.add_argument("--pretrained", type=int, default=0,
+                        help="base encoder to use for the model 1)cnn 2)resnet18 3)resnet50 4)resnet101 5)vit 6)rotation_eqv_cnn 7)rotoreflection_eqv_cnn")
     parser.add_argument("--batch_size", type=int, default=256, help="batch size")
     parser.add_argument("--run_mode", type=str, default='dryrun', help="different run modes 1)dryrun 2)train 3)test 4)auto_tune")
     parser.add_argument("--use_wandb", type=int, default=0, help="use wandb")
