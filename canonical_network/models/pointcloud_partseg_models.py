@@ -10,7 +10,7 @@ import wandb
 from torch.optim.lr_scheduler import ReduceLROnPlateau, CosineAnnealingLR, MultiStepLR
 
 from canonical_network.utils import *
-from canonical_network.models.pointcloud_networks import STNkd, STN3d, VNSTNkd, Transform_Net, VNPointnetSmall
+from canonical_network.models.pointcloud_networks import STNkd, STN3d, VNSTNkd, Transform_Net, VNSmall
 from canonical_network.models.vn_layers import *
 
 SEGMENTATION_CLASSES = {
@@ -55,17 +55,15 @@ class BasePointcloudModel(pl.LightningModule):
 
     def get_predictions(self, outputs):
         if type(outputs) == list:
-            return torch.cat(outputs, dim=0)
-        return outputs
+            outputs = list(zip(*outputs))
+            return torch.cat(outputs[0], dim=0)
+        return outputs[0]
 
     def configure_optimizers(self):
         if self.hyperparams.optimizer == "Adam":
             optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate, weight_decay=self.hyperparams.decay_rate)
-            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-                optimizer, patience=10, factor=0.5, min_lr=1e-6, mode="min"
-            )
             print("Using Adam optimizer")
-            return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": "train/loss"}
+            return optimizer
         elif self.hyperparams.optimizer == "SGD":
             self.learning_rate *= 100
             optimizer = torch.optim.SGD(self.parameters(), lr=self.learning_rate, momentum=0.9, weight_decay=self.hyperparams.decay_rate)
@@ -121,18 +119,16 @@ class BasePointcloudModel(pl.LightningModule):
         # Forward pass
         ont_hot_labels = to_categorical(label, self.num_classes).type_as(label)
         outputs = self(points, ont_hot_labels)
-        predictions = self.get_predictions(outputs).squeeze()
 
         # Loss
         loss = self.get_loss(outputs, targets)
-        # accuracy = tmf.accuracy(predictions.permute(0, 2, 1), targets)
 
         metrics = {"train/loss": loss}
         self.log_dict(metrics, on_epoch=True, prog_bar=True)
 
         return loss
 
-    def on_validation_start(self):
+    def on_validation_epoch_start(self):
         self.total_correct = 0
         self.total_seen = 0
         self.total_seen_class = [0 for _ in range(self.num_parts)]
@@ -186,9 +182,24 @@ class BasePointcloudModel(pl.LightningModule):
             }
         )
 
-    def get_loss(self, outputs, targets):
-        predictions = self.get_predictions(outputs).squeeze()
-        return F.nll_loss(predictions.permute(0, 2, 1), targets)
+    def get_loss(self, outputs, targets, smoothing=True):
+        ''' Calculate cross entropy loss and apply label smoothing. '''
+        predictions = self.get_predictions(outputs)
+        predictions = predictions.flatten(0, 1)
+        targets = targets.flatten(0, 1)
+
+        if smoothing:
+            eps = 0.2
+
+            one_hot = torch.zeros_like(predictions).scatter(1, targets.view(-1, 1), 1)
+            one_hot = one_hot * (1 - eps) + (1 - one_hot) * eps / (self.num_classes - 1)
+            log_prb = F.log_softmax(predictions, dim=1)
+
+            loss = -(one_hot * log_prb).sum(dim=1).mean()
+        else:
+            loss = F.cross_entropy(predictions, targets, reduction='mean')
+
+        return loss
 
     def append_to_metric_lists(self, points, predictions, targets):
         cur_batch_size, _, NUM_POINT = points.shape
@@ -314,12 +325,6 @@ class Pointnet(BasePointcloudModel):
 
         return net, trans_feat
 
-    def get_predictions(self, outputs):
-        if type(outputs) == list:
-            outputs = list(zip(*outputs))
-            return torch.cat(outputs[0], dim=0)
-        return outputs[0]
-
     def get_loss(self, outputs, targets):
         predictions = outputs[0].permute(0, 2, 1)
         transformation_matrix = outputs[1]
@@ -334,10 +339,8 @@ class Pointnet(BasePointcloudModel):
         return total_loss
 
     def feature_transform_regularizer(self, trans):
-        d = trans.size()[1]
-        I = torch.eye(d)[None, :, :]
-        if trans.is_cuda:
-            I = I.cuda()
+        d = trans.shape[1]
+        I = torch.eye(d)[None, :, :].to(trans.device)
         loss = torch.mean(torch.norm(torch.bmm(trans, trans.transpose(2, 1) - I), dim=(1, 2)))
         return loss
 
@@ -441,26 +444,18 @@ class DGCNN(BasePointcloudModel):
         x = self.conv10(x)
         x = self.conv11(x)
 
-        x = x.transpose(1, 2).contiguous()
-
-        net = F.log_softmax(x.view(-1, self.num_parts), dim=-1)
-        net = net.view(batch_size, num_points, self.num_parts)  # [B, N, 50]
+        x = x.transpose(1, 2)
         
         trans_feat = None
-        return net, trans_feat
+        return x, trans_feat
 
-    def get_predictions(self, outputs):
-        if type(outputs) == list:
-            outputs = list(zip(*outputs))
-            return torch.cat(outputs[0], dim=0)
-        return outputs[0]
 
 
 class PointcloudCanonFunction(pl.LightningModule):
     def __init__(self, hyperparams):
         super().__init__()
         self.model_type = hyperparams.canon_model_type
-        self.model = {"vn_pointnet": lambda: VNPointnetSmall(hyperparams)}[self.model_type]()
+        self.model = {"vn_pointnet": lambda: VNSmall(hyperparams)}[self.model_type]()
 
     def forward(self, points, labels):
         vectors = self.model(points, labels)
@@ -513,11 +508,6 @@ class EquivariantPointcloudModel(BasePointcloudModel):
 
         return self.pred_function(canonical_point_cloud, label)[0], rotation_matrix
 
-    def get_predictions(self, outputs):
-        if type(outputs) == list:
-            outputs = list(zip(*outputs))
-            return torch.cat(outputs[0], dim=0)
-        return outputs[0]
 
 
 class VNPointnet(BasePointcloudModel):

@@ -79,6 +79,15 @@ def random_scale_point_cloud(batch_data, scale_low=0.8, scale_high=1.25):
         batch_data[batch_index,:,:] *= scales[batch_index]
     return batch_data
 
+def random_point_dropout(batch_pc, max_dropout_ratio=0.875):
+    ''' batch_pc: BxNx3 '''
+    for b in range(batch_pc.shape[0]):
+        dropout_ratio =  torch.rand()*max_dropout_ratio # 0~0.875
+        drop_idx = torch.where(torch.rand((batch_pc.shape[1]))<=dropout_ratio)[0]
+        if len(drop_idx)>0:
+            batch_pc[b,drop_idx,:] = batch_pc[b,0,:] # set to the first point
+    return batch_pc
+
 def knn(x, k):
     inner = -2 * torch.matmul(x.transpose(2, 1), x)
     xx = torch.sum(x ** 2, dim=1, keepdim=True)
