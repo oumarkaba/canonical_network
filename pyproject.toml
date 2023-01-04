@@ -13,6 +13,7 @@ numpy = "^1.22.4"
 pytorch-lightning = "^1.6.4"
 torchmetrics = "^0.9.1"
 wandb = "^0.12.18"
+scipy = "^1.9.3"
 
 [tool.poetry.dev-dependencies]
 black = "^22.3.0"

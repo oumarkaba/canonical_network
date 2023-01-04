@@ -21,8 +21,8 @@ def pc_normalize(pc):
 class PartNormalDataset(Dataset):
     def __init__(
         self,
-        root="./data/shapenetcore_partanno_segmentation_benchmark_v0_normal",
-        npoints=2500,
+        root,
+        npoints,
         split="train",
         class_choice=None,
         normal_channel=False,
@@ -103,9 +103,6 @@ class PartNormalDataset(Dataset):
             "Knife": [22, 23],
         }
 
-        # for cat in sorted(self.seg_classes.keys()):
-        #     print(cat, self.seg_classes[cat])
-
         self.cache = {}  # from index to (point_set, cls, seg) tuple
         self.cache_size = 20000
 
@@ -139,42 +136,50 @@ class PartNormalDataset(Dataset):
 
 
 class ShapenetPartDataModule(pl.LightningDataModule):
-    def __init__(
-        self, hyperparams, data_path=utils.DATA_PATH / "shapenetcore_partanno_segmentation_benchmark_v0_normal"
-    ):
+    def __init__(self, hyperparams):
         super().__init__()
-        self.data_path = data_path
+        self.data_path = hyperparams.data_path
         self.hyperparams = hyperparams
 
     def setup(self, stage=None):
         if stage == "fit" or stage is None:
             self.train_dataset = PartNormalDataset(
-                root=self.data_path, npoints=self.hyperparams.num_points, split="train", normal_channel=self.hyperparams.normal_channel
+                root=self.data_path, npoints=self.hyperparams.num_points, split="trainval",
+                normal_channel=self.hyperparams.normal_channel
             )
             self.valid_dataset = PartNormalDataset(
-                root=self.data_path, npoints=self.hyperparams.num_points, split="val", normal_channel=self.hyperparams.normal_channel
+                root=self.data_path, npoints=self.hyperparams.num_points, split="test",
+                normal_channel=self.hyperparams.normal_channel
             )
         if stage == "test":
             self.test_dataset = PartNormalDataset(
-                root=self.data_path, npoints=self.hyperparams.num_points, split="test", normal_channel=self.hyperparams.normal_channel
+                root=self.data_path, npoints=self.hyperparams.num_points, split="test",
+                normal_channel=self.hyperparams.normal_channel
             )
 
     def train_dataloader(self):
         train_loader = DataLoader(
             self.train_dataset,
-            self.hyperparams.batch_size,
-            True,
+            batch_size=self.hyperparams.batch_size,
+            shuffle=True,
             num_workers=self.hyperparams.num_workers,
-            drop_last=True,
         )
         return train_loader
 
     def val_dataloader(self):
         valid_loader = DataLoader(
             self.valid_dataset,
-            self.hyperparams.batch_size,
-            False,
+            batch_size=self.hyperparams.batch_size,
+            shuffle=False,
             num_workers=self.hyperparams.num_workers,
-            drop_last=True,
         )
         return valid_loader
+
+    def test_dataloader(self):
+        test_loader = DataLoader(
+            self.test_dataset,
+            batch_size=self.hyperparams.batch_size,
+            shuffle=False,
+            num_workers=self.hyperparams.num_workers,
+        )
+        return test_loader

@@ -1,13 +1,3 @@
-#!/bin/bash
-
-module load python/3.7
-module load cudatoolkit
-
-source ~/venv/bin/activate
-export CUBLAS_WORKSPACE_CONFIG=:4096:8
-
-
-
 # To run vanilla model
 python -m canonical_network.train_images --run_mode train --model vanilla --batch_size 128 --use_wandb 1
 

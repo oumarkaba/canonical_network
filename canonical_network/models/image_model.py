@@ -12,8 +12,9 @@ class LitClassifier(pl.LightningModule):
     def __init__(self, hyperparams):
         super().__init__()
         #self.save_hyperparameters()
+        pretrained = True if hyperparams.pretrained else False
+        self.loss = nn.CrossEntropyLoss()
         if hyperparams.dataset == 'rotated_mnist':
-            self.loss = nn.CrossEntropyLoss()
             self.im_shape = (1, 28, 28)
             num_classes = 10
             if hyperparams.base_encoder == 'rotation_eqv_cnn':
@@ -21,7 +22,6 @@ class LitClassifier(pl.LightningModule):
             else:
                 out_channels = 32
         elif hyperparams.dataset in ('cifar10', 'cifar100'):
-            self.loss = nn.CrossEntropyLoss()
             self.im_shape = (3, 32, 32)
             num_classes = 10 if hyperparams.dataset == 'cifar10' else 100
             out_channels = 64
@@ -30,28 +30,20 @@ class LitClassifier(pl.LightningModule):
         if hyperparams.base_encoder == 'cnn':
             self.encoder = BasicConvEncoder(self.im_shape, out_channels)
         elif hyperparams.base_encoder == 'resnet18':
-            self.encoder = torchvision.models.resnet18(pretrained=False)
-            if hyperparams.dataset in ('cifar10', 'cifar100'):
-                self.encoder.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
-                self.encoder.maxpool = nn.Identity()
-            elif hyperparams.dataset == 'rotated_mnist':
-                self.encoder.conv1 = nn.Conv2d(1, 64, kernel_size=3, stride=1, padding=1, bias=False)
-                self.encoder.maxpool = nn.Identity()
+            self.encoder = torchvision.models.resnet18(pretrained=pretrained)
+            self.set_start_layer(hyperparams)
             self.encoder.fc = nn.Identity()
         elif hyperparams.base_encoder == 'resnet44':
             self.encoder = resnet44()
+            self.set_start_layer(hyperparams)
             self.encoder.fc = nn.Identity()
         elif hyperparams.base_encoder == 'resnet50':
-            self.encoder = torchvision.models.resnet50(pretrained=False)
-            if hyperparams.dataset in ('cifar10', 'cifar100'):
-                self.encoder.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
-                self.encoder.maxpool = nn.Identity()
-            elif hyperparams.dataset == 'rotated_mnist':
-                self.encoder.conv1 = nn.Conv2d(1, 64, kernel_size=3, stride=1, padding=1, bias=False)
-                self.encoder.maxpool = nn.Identity()
+            self.encoder = torchvision.models.resnet50(pretrained=pretrained)
+            self.set_start_layer(hyperparams)
             self.encoder.fc = nn.Identity()
         elif hyperparams.base_encoder == 'resnet101':
-            self.encoder = torchvision.models.resnet101(pretrained=False)
+            self.encoder = torchvision.models.resnet101(pretrained=pretrained)
+            self.set_start_layer(hyperparams)
             self.encoder.fc = Identity()
         elif hyperparams.base_encoder == 'wide_resnet':
             self.encoder = torchvision.models.wide_resnet50_2(pretrained=False)
@@ -96,6 +88,14 @@ class LitClassifier(pl.LightningModule):
         self.image_buffer = []
         self.canonized_image_buffer = []
         self.num_batches_invariant = 0.0
+
+    def set_start_layer(self, hyperparams):
+        if hyperparams.dataset in ('cifar10', 'cifar100'):
+            self.encoder.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
+            self.encoder.maxpool = nn.Identity()
+        elif hyperparams.dataset == 'rotated_mnist':
+            self.encoder.conv1 = nn.Conv2d(1, 64, kernel_size=3, stride=1, padding=1, bias=False)
+            self.encoder.maxpool = nn.Identity()
 
 
     def training_step(self, batch, batch_idx):
@@ -205,7 +205,7 @@ class LitClassifier(pl.LightningModule):
                 momentum=0.9,
                 weight_decay=5e-4,
             )
-            steps_per_epoch = 50000 // self.hyperparams.batch_size + 50000 % self.hyperparams.batch_size
+            #steps_per_epoch = 50000 // self.hyperparams.batch_size + 50000 % self.hyperparams.batch_size
             # scheduler_dict = {
             #     "scheduler": OneCycleLR(
             #         optimizer,

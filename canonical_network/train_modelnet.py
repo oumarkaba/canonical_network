@@ -4,19 +4,19 @@ from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 import wandb
 import os
 from argparse import ArgumentParser
-from canonical_network.prepare.shapenet_data import ShapenetPartDataModule
-from canonical_network.models.pointcloud_partseg_models import Pointnet, VNPointnet, DGCNN, EquivariantPointcloudModel
+from canonical_network.prepare.modelnet_data import ModelNetDataModule
+from canonical_network.models.pointcloud_classification_models import Pointnet, DGCNN, EquivariantPointcloudModel, VNPointnet
 import torch
 
 
 def get_hyperparams():
     parser = ArgumentParser()
     parser.add_argument("--model", type=str, default="equivariant_pointcloud_model",
-                        help="model to train 1) equivariant_pointcloud_model 2) pointnet 3) vn_pointnet 4) DGCNN")
+                        help="model to train 1) equivariant_pointcloud_model 2) pointnet 3) DGCNN")
     parser.add_argument("--pred_model_type", type=str, default="DGCNN",
                         help="base encoder to use for the model 1)DGCNN 2) pointnet")
-    parser.add_argument("--canon_model_type", type=str, default="vn_pointnet",
-                        help="canonicalization network type 1)vn_pointnet")
+    parser.add_argument("--canon_model_type", type=str, default="vn_net",
+                        help="canonicalization network type 1)vn_net")
     parser.add_argument("--pretrained", type=int, default=0,
                         help="whether the prediction network is pretrained [not implemented yet]")
     parser.add_argument("--batch_size", type=int, default=32, help="batch size")
@@ -29,16 +29,14 @@ def get_hyperparams():
     parser.add_argument('--learning_rate', default=0.001, type=float,
                         help='Initial learning rate (for SGD it is multiplied by 100) [default: 0.001]')
     parser.add_argument('--decay_rate', type=float, default=1e-4, help='Weight decay [default: 1e-4]')
-    parser.add_argument('--step_size', type=int, default=20, help='Decay step for lr decay [default: every 20 epochs]')
-    parser.add_argument('--lr_decay', type=float, default=0.5, help='Decay rate for lr decay [default: 0.5]')
-    parser.add_argument('--decay_type', type=str, default="cosine", help='Decay type 1) cosine 2) step [default: cosine]')
+    parser.add_argument('--decay_type', type=str, default="step", help='Decay type 1) cosine 2) step [default: cosine]')
     parser.add_argument('--gpu', type=str, default='0', help='GPU to use [default: GPU 0]')
-    parser.add_argument('--optimizer', type=str, default='SGD', help='Adam or SGD or SGD_built_in [default: SGD]')
+    parser.add_argument('--optimizer', type=str, default='SGD', help='Adam or SGD [default: SGD]')
 
     # File handling specific arguments
-    parser.add_argument("--dataset", type=str, default="shapenet", help="dataset to train on")
+    parser.add_argument("--dataset", type=str, default="modelnet", help="dataset to train on")
     parser.add_argument("--data_path", type=str, default="/network/projects/siamak_students/"
-                                                         "shapenetcore_partanno_segmentation_benchmark_v0_normal",
+                                                         "modelnet40_normal_resampled",
                         help="path to data")
     parser.add_argument("--use_checkpointing", type=int, default=1, help="use checkpointing")
     parser.add_argument("--checkpoint_path", type=str, default="canonical_network/checkpoints", help="path to checkpoint")
@@ -51,12 +49,11 @@ def get_hyperparams():
     parser.add_argument("--regularization_transform", type=int, default=0, help="regularization transform")
     parser.add_argument("--normal_channel", type=bool, default=False, help="normal channel [default: False]")
     parser.add_argument("--train_rotation", type=str, default="z", help="train rotation 1)z 2)so3")
-    parser.add_argument("--valid_rotation", type=str, default="z", help="train rotation 1)z 2)so3 [default: so3 to test equivariance]")
+    parser.add_argument("--valid_rotation", type=str, default="so3", help="train rotation 1)z 2)so3 [default: so3 to test equivariance]")
     parser.add_argument("--augment_train_data", type=int, default=0, help="whether to scale and shift the train data [default: 0]")
-    parser.add_argument("--num_classes", type=int, default=16, help="num classes of the classification problem [default: 16]")
-    parser.add_argument("--num_parts", type=int, default=50, help="num of parts in the segmentation problem [default: 50]")
-    parser.add_argument("--num_points", type=int, default=2048, help="num of points per pointcloud [default: 2048]")
-    parser.add_argument("--n_knn", type=int, default=40, help="num of nearest neighbors for DGCNN [default: 40]")
+    parser.add_argument("--num_classes", type=int, default=40, help="num classes of the classification problem [default: 16]")
+    parser.add_argument("--num_points", type=int, default=1024, help="num of points per pointcloud [default: 2048]")
+    parser.add_argument("--n_knn", type=int, default=20, help="num of nearest neighbors for DGCNN [default: 40]")
     parser.add_argument("--pooling", type=str, default="mean", help="pooling for VectorNeuron [default: mean]")
 
     args = parser.parse_args()
@@ -92,8 +89,7 @@ def train_pointnet():
 
     pl.seed_everything(hyperparams.seed)
 
-    if hyperparams.dataset == "shapenet":
-        data = ShapenetPartDataModule(hyperparams)
+    data = ModelNetDataModule(hyperparams)
 
     callbacks = []
 
@@ -101,12 +97,12 @@ def train_pointnet():
         checkpoint_callback = ModelCheckpoint(
             dirpath=hyperparams.checkpoint_path,
             filename= checkpoint_name,
-            monitor="valid/instance_avg_iou",
+            monitor="valid/instance_accuracy",
             mode="max"
         )
         callbacks.append(checkpoint_callback)
 
-    early_stop_metric_callback = EarlyStopping(monitor="valid/class_avg_iou", min_delta=0.0, patience=hyperparams.patience, verbose=True, mode="max")
+    early_stop_metric_callback = EarlyStopping(monitor="valid/class_accuracy", min_delta=0.0, patience=hyperparams.patience, verbose=True, mode="max")
     callbacks.append(early_stop_metric_callback)
 
     if hyperparams.run_mode == "test":
