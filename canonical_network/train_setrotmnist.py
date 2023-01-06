@@ -12,13 +12,15 @@ from canonical_network.models.set_model import SET_HYPERPARAMS, SetModel
 from canonical_network.models.set_base_models import DeepSets, Transformer, Permutation
 
 HYPERPARAMS = {
-    "model": "permutation",
+    "model": "deepsets",
     "batch_size": 64,
     "dryrun": False,
     "num_epochs": 500,
     "num_workers": 0,
     "auto_tune": False,
     "seed": 0,
+    "data_path": 'canonical_network/data/rotated_mnist',
+    "mode": 'set',
 }
 
 def train_digits():

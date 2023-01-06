@@ -95,6 +95,7 @@ def get_dataset(dir_path, split='train', setify=False):
         dataset = TensorDataset(images, labels)
     else:
         sets = [bw_image_to_set(img) for img in images]
+        labels = labels.unsqueeze(-1)
         dataset = utils.SetDataset(sets, labels)
     return dataset
 
@@ -110,13 +111,14 @@ class RotatedMNISTDataModule(pl.LightningDataModule):
         self.data_path = hyperparams.data_path
         self.hyperparams = hyperparams
         self.setify = setify
+        self.mode = hyperparams.mode
         if download == True:
             obtain(self.data_path)
         self.collate_fn = utils.combine_set_data_sparse if self.mode == "set" else None
 
     def setup(self, stage=None):
         if stage == "fit" or stage is None:
-            self.train_dataset = get_dataset(self.data_path, split='train', setifyset=self.setify)
+            self.train_dataset = get_dataset(self.data_path, split='train', setify=self.setify)
             self.valid_dataset = get_dataset(self.data_path, split='valid', setify=self.setify)
             print('Train dataset size: ', len(self.train_dataset))
             print('Valid dataset size: ', len(self.valid_dataset))
