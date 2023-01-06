@@ -5,6 +5,7 @@ import zipfile
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, TensorDataset
+import canonical_network.utils as utils
 import pytorch_lightning as pl
 
 def obtain(dir_path):
@@ -81,7 +82,7 @@ def custom_load_data(file_path):
     labels = torch.stack(label_list)
     return images, labels
 
-def get_dataset(dir_path, split='train'):
+def get_dataset(dir_path, split='train', setify=False):
     if split == 'train':
         file_path = os.path.join(dir_path, 'mnist_rotated_train.amat')
     elif split == 'valid':
@@ -90,26 +91,37 @@ def get_dataset(dir_path, split='train'):
         file_path = os.path.join(dir_path, 'mnist_rotated_test.amat')
     images, labels = custom_load_data(file_path)
 
-    dataset = TensorDataset(images, labels)
+    if not setify:
+        dataset = TensorDataset(images, labels)
+    else:
+        sets = [bw_image_to_set(img) for img in images]
+        dataset = utils.SetDataset(sets, labels)
     return dataset
 
 
+def bw_image_to_set(img, threshold=0.5):
+    idx = (img.view(28, 28).squeeze(0) > threshold).nonzero()  # assumes MNIST 28x28 image
+    return idx
+
+
 class RotatedMNISTDataModule(pl.LightningDataModule):
-    def __init__(self, hyperparams, download=False):
+    def __init__(self, hyperparams, download=False, setify=False):
         super().__init__()
         self.data_path = hyperparams.data_path
         self.hyperparams = hyperparams
+        self.setify = setify
         if download == True:
             obtain(self.data_path)
+        self.collate_fn = utils.combine_set_data_sparse if self.mode == "set" else None
 
     def setup(self, stage=None):
         if stage == "fit" or stage is None:
-            self.train_dataset = get_dataset(self.data_path, split='train')
-            self.valid_dataset = get_dataset(self.data_path, split='valid')
+            self.train_dataset = get_dataset(self.data_path, split='train', setifyset=self.setify)
+            self.valid_dataset = get_dataset(self.data_path, split='valid', setify=self.setify)
             print('Train dataset size: ', len(self.train_dataset))
             print('Valid dataset size: ', len(self.valid_dataset))
         if stage == "test":
-            self.test_dataset = get_dataset(self.data_path, split='test')
+            self.test_dataset = get_dataset(self.data_path, split='test', set=self.make_set)
             print('Test dataset size: ', len(self.test_dataset))
 
     def train_dataloader(self):
@@ -118,6 +130,7 @@ class RotatedMNISTDataModule(pl.LightningDataModule):
             self.hyperparams.batch_size,
             shuffle=True,
             num_workers=self.hyperparams.num_workers,
+            collate_fn=self.collate_fn,
         )
         return train_loader
 
@@ -127,6 +140,7 @@ class RotatedMNISTDataModule(pl.LightningDataModule):
             self.hyperparams.batch_size,
             shuffle=False,
             num_workers=self.hyperparams.num_workers,
+            collate_fn=self.collate_fn,
         )
         return valid_loader
 
@@ -136,15 +150,17 @@ class RotatedMNISTDataModule(pl.LightningDataModule):
             self.hyperparams.batch_size,
             shuffle=False,
             num_workers=self.hyperparams.num_workers,
+            collate_fn=self.collate_fn,
         )
         return test_loader
 
-# if __name__ == "__main__":
-#     parser = argparse.ArgumentParser()
-#     parser.add_argument(
-#         '--data-path', type=str,
-#         default='./canonical_network/data/rotated_mnist',
-#         help='Path to the dataset.'
-#     )
-#     args = parser.parse_args()
-#     obtain(args.data_path)
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        '--data-path', type=str,
+        default='./canonical_network/data/rotated_mnist',
+        help='Path to the dataset.'
+    )
+    args = parser.parse_args()
+    obtain(args.data_path)
