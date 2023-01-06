@@ -102,6 +102,8 @@ def get_dataset(dir_path, split='train', setify=False):
 
 def bw_image_to_set(img, threshold=0.5):
     idx = (img.view(28, 28).squeeze(0) > threshold).nonzero()  # assumes MNIST 28x28 image
+    idx = idx.float() / 27  # range [0, 1]
+    idx = (idx - 0.5) * 2  # range [-1, 1]
     return idx
 
 
