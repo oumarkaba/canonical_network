@@ -94,6 +94,20 @@ class Conv2dSiamese(nn.Module):
         return x
 
 
+class Conv2d(nn.Module):
+    def __init__(self,in_channels, out_channels, kernel_size,padding=1):
+        super().__init__()
+        self.out_channels = out_channels
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, padding=padding)
+        torch.nn.init.xavier_normal_(self.conv.weight)
+        self.bn = nn.BatchNorm2d(num_features=out_channels)
+
+
+    def forward(self, x):
+        x = self.bn(self.conv(x))
+        return x
+
+
 class Conv2dDeepSym(nn.Module):
     def __init__(self,in_channels, out_channels, kernel_size,padding=0,use_max=0):
         super().__init__()

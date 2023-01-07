@@ -49,11 +49,11 @@ import torch.nn as nn
 import pytorch_lightning as pl
 import torchmetrics.functional as tmf
 import wandb
-import torchsort
+# import torchsort
 
 from canonical_network.models.colouring_layers import \
     SetDropout,ReluSets,Conv2dDeepSym,Conv2dSiamese,\
-    SetMaxPool2d,SetUpsample,DeepSetsBlock,DeepSetsBlockSiamese,MLPBlock,Conv2dSAittala,Conv2dSridhar
+    SetMaxPool2d,SetUpsample,DeepSetsBlock,DeepSetsBlockSiamese,MLPBlock,Conv2dSAittala,Conv2dSridhar, Conv2d
 
 
 def double_conv(in_channels, out_channels,model_type,p_drop,use_max=0):
@@ -93,6 +93,16 @@ def double_conv(in_channels, out_channels,model_type,p_drop,use_max=0):
             ReluSets(),
             SetDropout(p_drop=p_drop)
         )
+    elif model_type == "canonical":
+        return nn.Sequential(
+            Conv2d(in_channels, out_channels, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Dropout2d(p=p_drop),
+            Conv2d(out_channels, out_channels, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Dropout2d(p=p_drop)
+        )
+
 
 def last_conv(model_type,c,use_max=0):
     if model_type == 'deepsets' or model_type == 'fullySiamese':
@@ -103,12 +113,14 @@ def last_conv(model_type,c,use_max=0):
         conv_last = Conv2dSiamese(c[2] + c[1], 3, 1, padding=0)
     elif model_type=='DeepSymmetricNet':
         conv_last = Conv2dDeepSym(c[2] + c[1], 3, 1,use_max=use_max,padding=0)
+    elif model_type == "canonical":
+        conv_last = Conv2d(c[2] + c[1], 3, 1, padding=0)
     return conv_last
 
 
 def get_feature_processing_block(model_type,channels):
     if model_type == 'deepsets' or model_type == 'DeepSymmetricNet'\
-            or model_type == 'Sridhar' or model_type == 'Aittala':
+            or model_type == 'Sridhar' or model_type == 'Aittala' or model_type == 'canonical':
         return DeepSetsBlock(channels=(channels[4],channels[4],channels[4]))
     elif model_type == 'fullySiamese':
         return DeepSetsBlockSiamese(channels=(channels[4],3*channels[4],channels[4]))
@@ -116,43 +128,61 @@ def get_feature_processing_block(model_type,channels):
         return MLPBlock(channels=(channels[4],channels[4],channels[4]))
 
 
+class CanonicalNetwork(pl.LightningModule):
+    def __init__(self):
+        super().__init__()
+        self.cnn_block = double_conv(3, 32, "canonical", 0.0)
+        self.deepsets_block = DeepSetsBlock(channels=(32, 32, 1))
+    
+    def forward(self, x):
+        x = self.cnn_block(x)
+        score = self.deepsets_block(x)
+        
+        return score
 
 class UNet(pl.LightningModule):
-    def __init__(self, hyperparams, model_type,p_drop,use_max):
+    def __init__(self, hyperparams):
         super().__init__()
         self.model_type = hyperparams.model_type
         self.p_drop = hyperparams.p_drop
         self.use_max = hyperparams.use_max
         self.learning_rate = hyperparams.learning_rate if hasattr(hyperparams, "learning_rate") else None
 
-        if self.model_type =='deepsets' or self.model_type == 'Sridhar':
+        if self.model_type =='deepsets' or self.model_type == 'Sridhar' or self.model_type == "canonical":
             c = (3, 64, 128, 200, 300)
-        elif model_type == 'Aittala':
+        elif self.model_type == 'Aittala':
             c = (3, 150, 200, 300, 320)
-        elif model_type == 'DeepSymmetricNet':
+        elif self.model_type == 'DeepSymmetricNet':
             c = (3, 50, 100, 150, 200)
 
-        self.dconv_down1 = double_conv(c[0], c[1],self.model_type,p_drop,use_max=use_max)
-        self.dconv_down2 = double_conv(c[1], c[2],self.model_type,p_drop,use_max=use_max)
-        self.dconv_down3 = double_conv(c[2], c[3],self.model_type,p_drop,use_max=use_max)
-        self.dconv_down4 = double_conv(c[3], c[4],self.model_type,p_drop,use_max=use_max)
+        if self.model_type == 'canonical':
+            self.canonical_network = CanonicalNetwork()
+
+        self.dconv_down1 = double_conv(c[0], c[1],self.model_type,self.p_drop,use_max=self.use_max)
+        self.dconv_down2 = double_conv(c[1], c[2],self.model_type,self.p_drop,use_max=self.use_max)
+        self.dconv_down3 = double_conv(c[2], c[3],self.model_type,self.p_drop,use_max=self.use_max)
+        self.dconv_down4 = double_conv(c[3], c[4],self.model_type,self.p_drop,use_max=self.use_max)
 
         self.maxpool2 = SetMaxPool2d(stride=2)
         self.maxpool8 = SetMaxPool2d(stride=8)
 
-        self.feature_processing_block = get_feature_processing_block(model_type=model_type,channels=c)
+        self.feature_processing_block = get_feature_processing_block(model_type=self.model_type,channels=c)
 
         self.upsample2 = SetUpsample(scale_factor=2)
         self.upsample8 = SetUpsample(scale_factor=8)
 
-        self.dconv_up3 = double_conv(c[4] + c[4], c[3],self.model_type,p_drop,use_max=use_max)
-        self.dconv_up2 = double_conv(c[3] + c[3], c[2],self.model_type,p_drop,use_max=use_max)
-        self.dconv_up1 = double_conv(c[2] + c[2], c[2],self.model_type,p_drop,use_max=use_max)
+        self.dconv_up3 = double_conv(c[4] + c[4], c[3],self.model_type,self.p_drop,use_max=self.use_max)
+        self.dconv_up2 = double_conv(c[3] + c[3], c[2],self.model_type,self.p_drop,use_max=self.use_max)
+        self.dconv_up1 = double_conv(c[2] + c[2], c[2],self.model_type,self.p_drop,use_max=self.use_max)
 
-        self.last_conv = last_conv(self.model_type,c,use_max=use_max)
+        self.last_conv = last_conv(self.model_type,c,use_max=self.use_max)
 
 
     def forward(self, x):
+        if self.model_type == 'canonical':
+            score = self.canonical_network(x)
+            x = self.sort(x, score)
+            
         conv1 = self.dconv_down1(x)
         x = self.maxpool2(conv1) #32
 
@@ -186,34 +216,73 @@ class UNet(pl.LightningModule):
 
         out = self.last_conv(x)
 
-        return out
+        if self.model_type == 'canonical':
+            out = self.unsort(out, score)
 
-    def training_step(self, batch):
+        return out
+    
+    def sort(self, x, score):
+        permutation = score.argsort(dim=1).unsqueeze(-1).expand_as(x)
+        sorted_x = x.gather(1, permutation)
+
+        rank = torchsort.soft_rank(score) - 1
+
+        rank = rank.unsqueeze(-1).expand_as(x)
+        left_idx = rank.long()
+        right_idx = torch.remainder((left_idx + 1), x.shape[1])
+        frac = rank.frac()
+        left = torch.zeros_like(x).scatter_(0, left_idx, x).to(x.device)
+        right = torch.zeros_like(x).scatter_(0, right_idx, x).to(x.device)
+        soft_sorted_x = (1 - frac) * left + frac * right
+
+        x = sorted_x + (soft_sorted_x - soft_sorted_x.detach())
+
+        return x
+    
+    def unsort(self, x, score):
+        permutation = score.argsort(dim=1).unsqueeze(-1).expand_as(x)
+        sorted_x = torch.zeros_like(x).scatter_(1, permutation, x).to(x.device)
+
+        rank = torchsort.soft_rank(score) - 1
+
+        rank = rank.unsqueeze(-1).expand_as(x)
+        left_idx = rank.long()
+        right_idx = torch.remainder((left_idx + 1), x.shape[1])
+        frac = rank.frac()
+        left = x.gather(1, left_idx)
+        right = x.gather(1, right_idx)
+        soft_sorted_x = (1 - frac) * left + frac * right
+
+        x = sorted_x + (soft_sorted_x - soft_sorted_x.detach())
+
+        return x
+        
+
+    def training_step(self, batch, batch_idx):
         inputs, targets = batch
 
         predictions = self(inputs)
 
-        loss = tmf.mean_absolute_error(predictions, targets)
+        loss = tmf.mean_absolute_error(predictions, targets) * 255
 
         metrics = {"train/loss": loss}
         self.log_dict(metrics, on_epoch=True)
 
         return loss
 
-    def validation_step(self, batch):
+    def validation_step(self, batch, batch_idx):
         inputs, targets = batch
 
-        output = self(inputs)
-        predictions = self.get_predictions(output)
+        predictions = self(inputs)
 
-        loss = tmf.mean_absolute_error(predictions, targets)
+        loss = tmf.mean_absolute_error(predictions, targets) * 255
 
         if self.global_step == 0:
             wandb.define_metric("valid/loss", summary="min")
 
         metrics = {"valid/loss": loss}
         self.log_dict(metrics, prog_bar=True)
-        return output
+        return predictions
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate, weight_decay=0.0)
@@ -223,14 +292,6 @@ class UNet(pl.LightningModule):
     def validation_epoch_end(self, validation_step_outputs):
         scheduler = self.lr_schedulers()
         self.log("lr", scheduler.optimizer.param_groups[0]["lr"])
-
-        predictions = validation_step_outputs[0]
-        # if self.current_epoch == 0:
-        #     model_filename = (
-        #         f"canonical_network/results/colors/onnx_models/{self.model}_{wandb.run.name}_{str(self.global_step)}.onnx"
-        #     )
-        #     # torch.onnx.export(self, (self.dummy_input, self.dummy_indices, 0.0), model_filename, opset_version=12)
-        #     wandb.save(model_filename)
 
         self.logger.experiment.log(
             {
