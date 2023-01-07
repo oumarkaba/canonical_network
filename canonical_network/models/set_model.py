@@ -25,7 +25,7 @@ SET_HYPERPARAMS = {
     "hidden_dim": 64,
     "out_dim": 1,
     "layer_pooling": "sum",
-    "final_pooling": "",
+    "final_pooling": "sum",
     "temperature_anneal": 0.0
 }
 

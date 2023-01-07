@@ -5,7 +5,7 @@ from torch.utils.data import Dataset
 import torch
 import torchvision
 import numpy as np
-import kornia as K
+# import kornia as K
 import os
 
 
