@@ -22,6 +22,7 @@ class SequentialMultiple(nn.Sequential):
 
 # Set model base class
 
+
 class BaseSetModel(pl.LightningModule):
     def __init__(self, hyperparams):
         super().__init__()
@@ -93,6 +94,42 @@ class BaseSetModel(pl.LightningModule):
             }
         )
 
+class ClassificationSetModel(BaseSetModel):
+    def __init__(self, hyperparams):
+        super().__init__(hyperparams)
+
+    def training_step(self, batch, batch_idx):
+        inputs, indices, targets = batch
+
+        output = self(inputs, indices, batch_idx)
+        predictions = self.get_predictions(output).squeeze()
+
+        loss = F.cross_entropy(predictions.squeeze(), targets.squeeze())
+        accuracy = tmf.accuracy(predictions, targets)
+
+        metrics = {"train/loss": loss, "train/accuracy": accuracy}
+        self.log_dict(metrics, on_epoch=True)
+
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        inputs, indices, targets = batch
+
+        output = self(inputs, indices, batch_idx)
+        predictions = self.get_predictions(output)
+
+        loss = F.cross_entropy(predictions.squeeze(), targets.squeeze())
+        accuracy = tmf.accuracy(predictions, targets)
+        # f1_score = tmf.f1_score(predictions, targets)
+
+        if self.global_step == 0:
+            wandb.define_metric("valid/loss", summary="min")
+            wandb.define_metric("valid/accuracy", summary="max")
+            # wandb.define_metric("valid/f1_score", summary="max")
+
+        metrics = {"valid/loss": loss, "valid/accuracy": accuracy}
+        self.log_dict(metrics, prog_bar=True)
+        return output
 # DeepSets model
 
 class SetLayer(pl.LightningModule):
@@ -117,12 +154,12 @@ class SetLayer(pl.LightningModule):
         return output, set_indices
 
 
-class DeepSets(BaseSetModel):
+class DeepSets(ClassificationSetModel):
     def __init__(self, hyperparams):
         super().__init__(hyperparams)
         self.model = "deepsets"
-        self.embedding_layer = nn.Embedding(self.num_embeddings, self.hidden_dim)
-        # self.embedding_layer = nn.Linear(2, self.hidden_dim)
+        # self.embedding_layer = nn.Embedding(self.num_embeddings, self.hidden_dim)
+        self.embedding_layer = nn.Linear(2, self.hidden_dim)
         self.set_layers = SequentialMultiple(
             *[SetLayer(self.hidden_dim, self.hidden_dim, self.layer_pooling) for i in range(self.num_layers - 1)]
         )
@@ -133,9 +170,9 @@ class DeepSets(BaseSetModel):
 
     def forward(self, x, set_indices, _):
         embeddings = self.embedding_layer(x)
-        x, _ = self.set_layers(embeddings, set_indices)
+        x, _ = self.set_layers(embeddings, set_indices[:, 0])
         if self.final_pooling:
-            x = ts.scatter(x, set_indices, reduce=self.final_pooling)
+            x = ts.scatter(x, set_indices[:, 0], 0, reduce=self.final_pooling)
         output = self.output_layer(x)
         return output
 

@@ -23,7 +23,7 @@ SET_HYPERPARAMS = {
     "canon_layer_pooling": "sum",
     "num_layers": 6,
     "hidden_dim": 64,
-    "out_dim": 1,
+    "out_dim": 10,
     "layer_pooling": "sum",
     "final_pooling": "sum",
     "temperature_anneal": 0.0
