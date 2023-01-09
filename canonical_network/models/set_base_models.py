@@ -7,6 +7,7 @@ import torchmetrics.functional as tmf
 import wandb
 import torch_scatter as ts
 import torchsort
+import dgl
 
 
 class SequentialMultiple(nn.Sequential):
@@ -121,6 +122,7 @@ class DeepSets(BaseSetModel):
         super().__init__(hyperparams)
         self.model = "deepsets"
         self.embedding_layer = nn.Embedding(self.num_embeddings, self.hidden_dim)
+        # self.embedding_layer = nn.Linear(2, self.hidden_dim)
         self.set_layers = SequentialMultiple(
             *[SetLayer(self.hidden_dim, self.hidden_dim, self.layer_pooling) for i in range(self.num_layers - 1)]
         )
@@ -136,6 +138,39 @@ class DeepSets(BaseSetModel):
             x = ts.scatter(x, set_indices, reduce=self.final_pooling)
         output = self.output_layer(x)
         return output
+
+class DeepSetsCanonical(BaseSetModel):
+    def __init__(self, hyperparams):
+        super().__init__(hyperparams)
+        self.model = "deepsetscanonical"
+        self.deepsets = DeepSets(hyperparams)
+        self.energy = DeepSets(hyperparams)  # use same model for now
+        self.register_buffer('initial_rotation', torch.eye(2))
+        self.lr = 1
+
+    def forward(self, x, set_indices, _):
+        rotated, rotation = self.min_energy(x, set_indices)
+        output = self.deepsets(rotated)
+        # in this case, we don't necessarily care about undoing the rotation
+        return output
+    
+    def min_energy(self, input, indices):
+        # currently the optimization is being performed on the rotations directly, with gram schmidt being
+        # used to project the modified matrix into a rotation again
+        # alternatively, this optimization can be done on the vectors that go into gram schmidt
+        real_batch_size = indices.max().item()
+        rotation = self.initial_rotation.unsqueeze(0).expand(real_batch_size, -1, -1)
+        for i in range(5):
+            if self.implicit:
+                rotation = rotation.detach()
+            rotated = dgl.ops.gather_mm(input, rotation, indices[:, 0])
+            energy = self.energy(rotated)
+            g, = torch.autograd.grad(energy, rotation, only_inputs=True, create_graph=True)
+            rotation = rotation - self.lr * g
+            rotation = self.gram_schmidt(rotation)
+        rotated = dgl.ops.gather_mm(input, rotation, indices[:, 0])
+        return rotated, rotation
+
 
 # Transformer
 
