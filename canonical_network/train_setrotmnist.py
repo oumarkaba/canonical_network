@@ -50,7 +50,7 @@ def train_digits():
     }[set_hypeyparams.model]()
 
     # accel = 'cpu' if set_hypeyparams.model != 'transformer' else 'auto'
-    accel = 'cpu'
+    accel = 'auto'
 
     if set_hypeyparams.auto_tune:
         trainer = pl.Trainer(fast_dev_run=set_hypeyparams.dryrun, max_epochs=set_hypeyparams.num_epochs, accelerator=accel, auto_scale_batch_size=True, auto_lr_find=True, logger=wandb_logger, callbacks=callbacks, deterministic=False)
