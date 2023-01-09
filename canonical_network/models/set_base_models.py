@@ -6,7 +6,7 @@ import pytorch_lightning as pl
 import torchmetrics.functional as tmf
 import wandb
 import torch_scatter as ts
-import torchsort
+#import torchsort
 import dgl
 
 
@@ -105,7 +105,7 @@ class ClassificationSetModel(BaseSetModel):
         predictions = self.get_predictions(output).squeeze()
 
         loss = F.cross_entropy(predictions.squeeze(), targets.squeeze())
-        accuracy = tmf.accuracy(predictions, targets)
+        accuracy = tmf.accuracy(predictions, targets, task='multiclass', num_classes=10)
 
         metrics = {"train/loss": loss, "train/accuracy": accuracy}
         self.log_dict(metrics, on_epoch=True, batch_size=64)
@@ -119,7 +119,7 @@ class ClassificationSetModel(BaseSetModel):
         predictions = self.get_predictions(output)
 
         loss = F.cross_entropy(predictions.squeeze(), targets.squeeze())
-        accuracy = tmf.accuracy(predictions, targets)
+        accuracy = tmf.accuracy( predictions, targets, task='multiclass', num_classes=10)  
         # f1_score = tmf.f1_score(predictions, targets)
 
         if self.global_step == 0:
