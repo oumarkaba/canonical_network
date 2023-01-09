@@ -187,7 +187,7 @@ class CanonicalDeepSets(ClassificationSetModel):
     def __init__(self, hyperparams):
         super().__init__(hyperparams)
         self.model = "canonicaldeepsets"
-        self.lr = 1
+        self.lr = 0.1
         self.implicit = True
         self.iters = 5
 
@@ -220,6 +220,8 @@ class CanonicalDeepSets(ClassificationSetModel):
             g, = torch.autograd.grad(energy, rotation, only_inputs=True, create_graph=(i == self.iters - 1) if self.implicit else True)
             rotation = rotation - self.lr * g
             rotation = self.gram_schmidt(rotation)
+            print(i)
+            print(rotation[0])
         rotated = dgl.ops.gather_mm(input, rotation, idx_b=indices[:, 0])
         return rotated, rotation
 
