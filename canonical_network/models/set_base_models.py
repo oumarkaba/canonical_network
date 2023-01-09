@@ -108,7 +108,7 @@ class ClassificationSetModel(BaseSetModel):
         accuracy = tmf.accuracy(predictions, targets)
 
         metrics = {"train/loss": loss, "train/accuracy": accuracy}
-        self.log_dict(metrics, on_epoch=True)
+        self.log_dict(metrics, on_epoch=True, batch_size=64)
 
         return loss
 
@@ -128,8 +128,15 @@ class ClassificationSetModel(BaseSetModel):
             # wandb.define_metric("valid/f1_score", summary="max")
 
         metrics = {"valid/loss": loss, "valid/accuracy": accuracy}
-        self.log_dict(metrics, prog_bar=True)
+        self.log_dict(metrics, prog_bar=True, batch_size=64)
         return output
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate, weight_decay=1e-10)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=20, factor=0.5, min_lr=1e-6, mode="max")
+        return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": "valid/accuracy"}
+
+
 # DeepSets model
 
 class SetLayer(pl.LightningModule):
@@ -145,7 +152,7 @@ class SetLayer(pl.LightningModule):
     def forward(self, x, set_indices):
         identity = self.identity_linear(x)
 
-        pooled_set = ts.scatter(x, set_indices, 0, reduce=self.pooling)
+        pooled_set = ts.scatter(x, set_indices, 0, reduce=self.pooling)  / 100
         pooling = self.pooling_linear(pooled_set)
         pooling = torch.index_select(pooling, 0, set_indices)
 
@@ -172,41 +179,57 @@ class DeepSets(ClassificationSetModel):
         embeddings = self.embedding_layer(x)
         x, _ = self.set_layers(embeddings, set_indices[:, 0])
         if self.final_pooling:
-            x = ts.scatter(x, set_indices[:, 0], 0, reduce=self.final_pooling)
+            x = ts.scatter(x, set_indices[:, 0], 0, reduce=self.final_pooling) / 100
         output = self.output_layer(x)
         return output
 
-class DeepSetsCanonical(BaseSetModel):
+class CanonicalDeepSets(ClassificationSetModel):
     def __init__(self, hyperparams):
         super().__init__(hyperparams)
-        self.model = "deepsetscanonical"
+        self.model = "canonicaldeepsets"
+        self.lr = 1
+        self.implicit = True
+        self.iters = 5
+
         self.deepsets = DeepSets(hyperparams)
+        canon_hyperparams = dict(hyperparams)
+        canon_hyperparams['out_dim'] = 1
         self.energy = DeepSets(hyperparams)  # use same model for now
         self.register_buffer('initial_rotation', torch.eye(2))
-        self.lr = 1
 
     def forward(self, x, set_indices, _):
         rotated, rotation = self.min_energy(x, set_indices)
-        output = self.deepsets(rotated)
+        output = self.deepsets(rotated, set_indices, _)
         # in this case, we don't necessarily care about undoing the rotation
         return output
     
+    @torch.enable_grad()
     def min_energy(self, input, indices):
         # currently the optimization is being performed on the rotations directly, with gram schmidt being
         # used to project the modified matrix into a rotation again
         # alternatively, this optimization can be done on the vectors that go into gram schmidt
-        real_batch_size = indices.max().item()
-        rotation = self.initial_rotation.unsqueeze(0).expand(real_batch_size, -1, -1)
-        for i in range(5):
+        real_batch_size = indices.max().item() + 1
+        rotation = self.initial_rotation.clone().requires_grad_(True).unsqueeze(0).expand(real_batch_size, -1, -1)
+        # print(rotation)
+        for i in range(self.iters):
             if self.implicit:
                 rotation = rotation.detach()
-            rotated = dgl.ops.gather_mm(input, rotation, indices[:, 0])
-            energy = self.energy(rotated)
-            g, = torch.autograd.grad(energy, rotation, only_inputs=True, create_graph=True)
+                rotation.requires_grad_(True)
+            rotated = dgl.ops.gather_mm(input, rotation, idx_b=indices[:, 0])
+            energy = self.energy(rotated, indices, None).sum()
+            g, = torch.autograd.grad(energy, rotation, only_inputs=True, create_graph=(i == self.iters - 1) if self.implicit else True)
             rotation = rotation - self.lr * g
             rotation = self.gram_schmidt(rotation)
-        rotated = dgl.ops.gather_mm(input, rotation, indices[:, 0])
+        rotated = dgl.ops.gather_mm(input, rotation, idx_b=indices[:, 0])
         return rotated, rotation
+
+    def gram_schmidt(self, vectors):
+        v1 = vectors[:, 0]
+        v1 = v1 / torch.norm(v1, dim=1, keepdim=True)
+        v2 = (vectors[:, 1] - torch.sum(vectors[:, 1] * v1, dim=1, keepdim=True) * v1)
+        v2 = v2 / torch.norm(v2, dim=1, keepdim=True)
+        return torch.stack([v1, v2], dim=1)
+
 
 
 # Transformer
