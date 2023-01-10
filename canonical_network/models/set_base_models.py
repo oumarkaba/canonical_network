@@ -186,6 +186,7 @@ class DeepSets(ClassificationSetModel):
 class CanonicalDeepSets(ClassificationSetModel):
     def __init__(self, hyperparams):
         super().__init__(hyperparams)
+        from canonical_network.models.set_model import SetModel
         self.model = "canonicaldeepsets"
         self.lr = 0.1
         self.implicit = True
@@ -215,14 +216,15 @@ class CanonicalDeepSets(ClassificationSetModel):
             if self.implicit:
                 rotation = rotation.detach()
                 rotation.requires_grad_(True)
-            rotated = dgl.ops.gather_mm(input, rotation, idx_b=indices[:, 0])
+#            rotated = dgl.ops.gather_mm(input, rotation, idx_b=indices[:, 0])
+            rotated = torch.einsum('nc, ncd -> nd', input, rotation.gather(0, indices.unsqueeze(-1).expand(-1, -1, 2)))
             energy = self.energy(rotated, indices, None).sum()
             g, = torch.autograd.grad(energy, rotation, only_inputs=True, create_graph=(i == self.iters - 1) if self.implicit else True)
             rotation = rotation - self.lr * g
             rotation = self.gram_schmidt(rotation)
             print(i)
             print(rotation[0])
-        rotated = dgl.ops.gather_mm(input, rotation, idx_b=indices[:, 0])
+        rotated = torch.einsum('nc, ncd -> nd', input, rotation.gather(0, indices.unsqueeze(-1).expand(-1, -1, 2)))
         return rotated, rotation
 
     def gram_schmidt(self, vectors):

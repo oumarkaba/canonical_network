@@ -10,7 +10,7 @@ import torchmetrics.functional as tmf
 from einops import rearrange
 import wandb
 
-from canonical_network.models.set_base_models import BaseSetModel, DeepSets, SequentialMultiple
+from canonical_network.models.set_base_models import BaseSetModel, DeepSets, SequentialMultiple, ClassificationSetModel
 from canonical_network.utils import define_hyperparams, dict_to_object
 
 SET_HYPERPARAMS = {
@@ -104,7 +104,8 @@ class SetPredictionFunction(pl.LightningModule):
         self.layer_pooling = hyperparams.layer_pooling
         self.final_pooling = hyperparams.final_pooling
 
-        self.embedding_layer = nn.Embedding(self.num_embeddings, self.hidden_dim)
+#        self.embedding_layer = nn.Embedding(self.num_embeddings, self.hidden_dim)
+        self.embedding_layer = nn.Linear(2, self.hidden_dim)
         self.set_layers = SequentialMultiple(
             *[
                 SetPredictionLayer(
@@ -117,14 +118,14 @@ class SetPredictionFunction(pl.LightningModule):
 
     def forward(self, x, clusters, set_indices):
         embeddings = self.embedding_layer(x)
-        x, _, _ = self.set_layers(embeddings, clusters, set_indices)
+        x, _, _ = self.set_layers(embeddings, clusters, set_indices[:, 0])
         if self.final_pooling:
-            x = ts.scatter(x, set_indices, reduce=self.final_pooling)
+            x = ts.scatter(x, set_indices[:, 0], 0, reduce=self.final_pooling)
         output = self.output_layer(x)
         return output.squeeze()
 
 
-class SetModel(BaseSetModel):
+class SetModel(ClassificationSetModel):
     def __init__(self, hyperparams):
         super().__init__(hyperparams)
         self.model = "set_model"
@@ -138,7 +139,7 @@ class SetModel(BaseSetModel):
         clusters = self.canon_function(x, set_indices, batch_idx)
         output = self.prediction_function(x, clusters, set_indices)
 
-        return output, clusters
+        return output#, clusters
 
     def get_predictions(self, x):
         return x[0]
