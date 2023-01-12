@@ -2,7 +2,8 @@ from torch import optim, nn
 import pytorch_lightning as pl
 import torch
 from torch.optim.lr_scheduler import OneCycleLR, MultiStepLR
-from canonical_network.models.image_networks import VanillaNetwork, EquivariantCanonizationNetwork, BasicConvEncoder, Identity, PCACanonizationNetwork, RotationEquivariantConvEncoder
+from canonical_network.models.image_networks import VanillaNetwork, EquivariantCanonizationNetwork, \
+    BasicConvEncoder, Identity, PCACanonizationNetwork, RotationEquivariantConvEncoder, OptimizationCanonizationNetwork
 from canonical_network.models.resnet import resnet44
 import torchvision
 from canonical_network.utils import check_rotation_invariance, check_rotoreflection_invariance, save_images_class_wise
@@ -79,7 +80,12 @@ class LitClassifier(pl.LightningModule):
             )
         elif hyperparams.model == 'canonized_pca':
             self.network = PCACanonizationNetwork(
-                self.encoder, self.im_shape, num_classes
+                self.encoder, self.im_shape, num_classes, hyperparams.batch_size
+            )
+        elif hyperparams.model == 'equivariant_optimization':
+            self.network = OptimizationCanonizationNetwork(
+                self.encoder, self.im_shape, num_classes,
+                hyperparams
             )
         else:
             raise ValueError('model not implemented for now.')
@@ -101,10 +107,13 @@ class LitClassifier(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         # training_step defines the train loop.
         # it is independent of forward
-        x, y = batch
+        if self.hyperparams.data_mode == 'image':
+            x, y = batch
+        else:
+            x, points, y = batch
         x = x.reshape(x.size(0), self.im_shape[0], self.im_shape[1], self.im_shape[2])
 
-        logits = self.network(x)
+        logits = self.network(x) if self.hyperparams.data_mode == 'image' else self.network(x, points)
         loss = self.loss(logits, y)
 
         acc = (logits.argmax(dim=-1) == y).float().mean()
@@ -114,9 +123,12 @@ class LitClassifier(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        x, y = batch
+        if self.hyperparams.data_mode == 'image':
+            x, y = batch
+        else:
+            x, points, y = batch
         x = x.reshape(x.size(0), self.im_shape[0], self.im_shape[1], self.im_shape[2])
-        logits = self.network(x)
+        logits = self.network(x) if self.hyperparams.data_mode == 'image' else self.network(x, points)
         loss = self.loss(logits, y)
         preds = logits.argmax(dim=-1)
         acc = (preds == y).float().mean()
@@ -126,7 +138,10 @@ class LitClassifier(pl.LightningModule):
         return metrics
 
     def test_step(self, batch, batch_idx):
-        x, y = batch
+        if self.hyperparams.data_mode == 'image':
+            x, y = batch
+        else:
+            x, points, y = batch
         x = x.reshape(x.size(0), self.im_shape[0], self.im_shape[1], self.im_shape[2])
         if self.hyperparams.model in ('equivariant', 'canonized_pca'):
             if self.hyperparams.check_invariance:
@@ -165,7 +180,7 @@ class LitClassifier(pl.LightningModule):
                         'canonized_images', self.num_classes
                     )
                     print('saving canonized images')
-        logits = self.network(x)
+        logits = self.network(x) if self.hyperparams.data_mode == 'image' else self.network(x, points)
         loss = self.loss(logits, y)
         preds = logits.argmax(dim=-1)
         acc = (preds == y).float().mean()

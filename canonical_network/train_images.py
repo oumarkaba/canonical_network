@@ -12,11 +12,13 @@ from canonical_network.models.image_model import LitClassifier
 
 def get_hyperparams():
     parser = ArgumentParser()
-    parser.add_argument("--model", type=str, default="vanilla", help="model to train 1) vanilla 2) equivariant")
+    parser.add_argument("--model", type=str, default="vanilla", help="model to train 1) vanilla 2) equivariant 3) canonized_pca 4) equivariant_optimization")
     parser.add_argument("--base_encoder", type=str, default="cnn",
                         help="base encoder to use for the model 1)cnn 2)resnet18 3)resnet50 4)resnet101 5)vit 6)rotation_eqv_cnn 7)rotoreflection_eqv_cnn")
     parser.add_argument("--pretrained", type=int, default=0,
                         help="base encoder to use for the model 1)cnn 2)resnet18 3)resnet50 4)resnet101 5)vit 6)rotation_eqv_cnn 7)rotoreflection_eqv_cnn")
+    parser.add_argument("--data_mode", type=str, default='image',
+                        help="different run modes 1)image 2)mixed (mixed has both image and pointcloud grid representation for deepsets)")
     parser.add_argument("--batch_size", type=int, default=256, help="batch size")
     parser.add_argument("--run_mode", type=str, default='dryrun', help="different run modes 1)dryrun 2)train 3)test 4)auto_tune")
     parser.add_argument("--use_wandb", type=int, default=0, help="use wandb")
@@ -43,6 +45,15 @@ def get_hyperparams():
     parser.add_argument("--save_canonized_images", type=int, default=0, help="save canonized images")
     parser.add_argument("--check_invariance", type=int, default=0, help="check if the network is invariant")
     parser.add_argument("--num_channels", type=int, default=20, help="num_channels for equivariant cnn base encoder")
+
+    # Hyperparameters for the energy based model and Deepset
+    parser.add_argument("--num_layers", type=int, default=6, help="number of deepset layers")
+    parser.add_argument("--hidden_dim", type=int, default=64, help="hidden dimension for deepset")
+    parser.add_argument("--layer_pooling", type=str, default="mean", help="pooling for deepset intermediate layers")
+    parser.add_argument("--final_pooling", type=str, default="mean", help="pooling for deepset final layer")
+    parser.add_argument("--num_optimization_iters", type=int, default=20, help="number of optimization iterations for the energy based model")
+    parser.add_argument("--rot_opt_lr", type=float, default=0.01, help="number of samples for the energy based model")
+    parser.add_argument("--implicit", type=int, default=0, help="whether to use implicit rotation optimization")
     args = parser.parse_args()
     return args
 
@@ -69,7 +80,7 @@ def train_images():
     pl.seed_everything(hyperparams.seed)
 
     if hyperparams.dataset == "rotated_mnist":
-        image_data = RotatedMNISTDataModule(hyperparams)
+        image_data = RotatedMNISTDataModule(hyperparams, mode=hyperparams.data_mode)
     elif hyperparams.dataset == "cifar10":
         image_data = CIFAR10DataModule(hyperparams)
     else:

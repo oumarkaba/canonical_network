@@ -51,7 +51,7 @@ def get_hyperparams():
     parser.add_argument("--regularization_transform", type=int, default=0, help="regularization transform")
     parser.add_argument("--normal_channel", type=bool, default=False, help="normal channel [default: False]")
     parser.add_argument("--train_rotation", type=str, default="z", help="train rotation 1)z 2)so3")
-    parser.add_argument("--valid_rotation", type=str, default="z", help="train rotation 1)z 2)so3 [default: so3 to test equivariance]")
+    parser.add_argument("--valid_rotation", type=str, default="so3", help="train rotation 1)z 2)so3 [default: so3 to test equivariance]")
     parser.add_argument("--augment_train_data", type=int, default=0, help="whether to scale and shift the train data [default: 0]")
     parser.add_argument("--num_classes", type=int, default=16, help="num classes of the classification problem [default: 16]")
     parser.add_argument("--num_parts", type=int, default=50, help="num of parts in the segmentation problem [default: 50]")
@@ -74,16 +74,19 @@ def train_pointnet():
         os.environ["WANDB_MODE"] = "online"
 
     if hyperparams.use_checkpointing:
-        if hyperparams.model is not "equivariant_pointcloud_model":
-            hyperparams.checkpoint_path = hyperparams.checkpoint_path + "/" + hyperparams.dataset + "/" + hyperparams.model \
-                                          + "/train_rotation_" + hyperparams.train_rotation
-            checkpoint_name = f"{hyperparams.model}_seed_{hyperparams.seed}"
-        else:
+        if hyperparams.model == "equivariant_pointcloud_model":
             hyperparams.checkpoint_path = hyperparams.checkpoint_path + "/" + hyperparams.dataset + "/" + hyperparams.model \
                                           + "/" + hyperparams.pred_model_type + "/train_rotation_" + hyperparams.train_rotation
             checkpoint_name = f"{hyperparams.model}_" \
-                            f"canon_model_{hyperparams.canon_model_type}"\
-                            f"_seed_{hyperparams.seed}"
+                              f"canon_model_{hyperparams.canon_model_type}" \
+                              f"_seed_{hyperparams.seed}"
+
+        else:
+            hyperparams.checkpoint_path = hyperparams.checkpoint_path + "/" + hyperparams.dataset + "/" + hyperparams.model \
+                                          + "/train_rotation_" + hyperparams.train_rotation
+            checkpoint_name = f"{hyperparams.model}_seed_{hyperparams.seed}"
+
+        print(f"Checkpoint path: {hyperparams.checkpoint_path}")
 
     wandb.init(config=hyperparams, entity=hyperparams.wandb_entity, project=hyperparams.wandb_project)
     wandb_logger = WandbLogger(project=hyperparams.wandb_project, log_model="all")

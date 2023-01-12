@@ -41,6 +41,18 @@ class SetDataset(Dataset):
     def __getitem__(self, index):
         return self.features[index], self.targets[index]
 
+class ImageSetMixedDataset(Dataset):
+    def __init__(self, images, features, targets):
+        self.images = images
+        self.features = features
+        self.targets = targets
+
+    def __len__(self):
+        return len(self.features)
+
+    def __getitem__(self, index):
+        return self.images[index], self.features[index], self.targets[index]
+
 
 def to_categorical(y, num_classes):
     return torch.eye(num_classes)[y]
@@ -65,7 +77,7 @@ def random_shift_point_cloud(batch_data, shift_range=0.1):
     return batch_data
 
 
-def random_scale_point_cloud(batch_data, scale_low=0.8, scale_high=1.25):
+def random_scale_point_cloud(batch_data, scale_low=0.8, scale_high=1.2):
     """ Randomly scale the point cloud. Scale is per point cloud.
         Input:
             BxNx3 array, original batch of point clouds
@@ -79,13 +91,13 @@ def random_scale_point_cloud(batch_data, scale_low=0.8, scale_high=1.25):
         batch_data[batch_index,:,:] *= scales[batch_index]
     return batch_data
 
-def random_point_dropout(batch_pc, max_dropout_ratio=0.875):
+def random_point_dropout(batch_pc, max_dropout_ratio=0.9):
     ''' batch_pc: BxNx3 '''
     for b in range(batch_pc.shape[0]):
-        dropout_ratio =  torch.rand()*max_dropout_ratio # 0~0.875
+        dropout_ratio =  np.random.random() * max_dropout_ratio # 0~0.875
         drop_idx = torch.where(torch.rand((batch_pc.shape[1]))<=dropout_ratio)[0]
         if len(drop_idx)>0:
-            batch_pc[b,drop_idx,:] = batch_pc[b,0,:] # set to the first point
+            batch_pc[b,drop_idx,:] = batch_pc.clone()[b,0,:] # set to the first point
     return batch_pc
 
 def knn(x, k):

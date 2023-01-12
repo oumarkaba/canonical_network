@@ -178,21 +178,32 @@ class VNSmall(pl.LightningModule):
         self.conv1 = VNLinearLeakyReLU(64 // 3, 64 // 3, dim=4, negative_slope=0.0)
         self.bn1 = VNBatchNorm(64 // 3, dim=4)
         self.conv2 = VNLinearLeakyReLU(64 // 3, 12 // 3, dim=4, negative_slope=0.0)
+        self.dropout = nn.Dropout(p=0.5)
 
         if self.pooling == "max":
             self.pool = VNMaxPool(64 // 3)
         elif self.pooling == "mean":
             self.pool = mean_pool
 
+
+        # Wild idea -- Just use a linear layer to predict the output
+        self.conv = VNLinear(3, 12 // 3)
+
+
     def forward(self, point_cloud, labels=None):
 
         point_cloud = point_cloud.unsqueeze(1)
         feat = get_graph_feature_cross(point_cloud, k=self.n_knn)
-        point_cloud = self.conv_pos(feat)
-        point_cloud = self.pool(point_cloud)
+        # point_cloud = self.conv_pos(feat)
+        # point_cloud = self.pool(point_cloud)
+        #
+        # out = self.bn1(self.conv1(point_cloud))
+        # out = self.conv2(out)
+        # out = self.dropout(out)
 
-        out = self.bn1(self.conv1(point_cloud))
-        out = self.conv2(out)
+        out = self.pool(self.conv(feat))
+        out = self.dropout(out)
+
         return out.mean(dim=-1)
 
 class PointNetEncoder(pl.LightningModule):

@@ -5,6 +5,7 @@ import torch
 from canonical_network.models.equivariant_layers import RotationEquivariantConvLift, \
     RotoReflectionEquivariantConvLift, RotationEquivariantConv, RotoReflectionEquivariantConv
 from torchvision import transforms
+from canonical_network.models.set_base_models import SequentialMultiple
 import numpy as np
 
 
@@ -200,6 +201,69 @@ class PCACanonizationNetwork(nn.Module):
         reps = reps.view(batch_size, -1)
         return self.predictor(reps)
 
+class OptimizationCanonizationNetwork(nn.Module):
+    def __init__(self, encoder, in_shape, num_classes, hyperparams=None):
+        super().__init__()
+        self.energy = CustomDeepSets(hyperparams)
+        self.lr = hyperparams.rot_opt_lr
+        self.iters = hyperparams.num_optimization_iters
+        self.implicit = True if hyperparams.implicit else False
+        self.encoder = encoder
+        out_shape = self.encoder(torch.zeros(1, *in_shape)).shape
+        print('feature map shape:', out_shape)
+        print(self.encoder)
+        if len(out_shape) == 4:
+            self.predictor = nn.Linear(out_shape[1] * out_shape[2] * out_shape[3], num_classes)
+        elif len(out_shape) == 2:
+            self.predictor = nn.Linear(out_shape[1], num_classes)
+        else:
+            raise ValueError('Base encoder output shape must be 2 or 4 dimensional.')
+
+        self.register_buffer('initial_rotation', torch.eye(2))
+
+    @torch.enable_grad()
+    def min_energy(self, points):
+        batch_size = points.shape[0]
+        rotation = self.initial_rotation.clone().requires_grad_(True).unsqueeze(0).expand(batch_size, -1, -1)
+        for i in range(self.iters):
+            if self.implicit:
+                rotation = rotation.detach()
+                rotation.requires_grad_(True)
+            rotated_coord = torch.bmm(points[:,:,:2], rotation)
+            rotated = torch.cat([rotated_coord, points[:,:,2:]], dim=-1)
+            energy = self.energy(rotated).sum()
+            g, = torch.autograd.grad(energy, rotation, only_inputs=True,
+                                     create_graph=(i == self.iters - 1) if self.implicit else True)
+            rotation = rotation - self.lr * g
+            rotation = self.gram_schmidt(rotation)
+            # print(rotation[0])
+            # print(energy.item())
+        return rotation
+
+
+    def get_canonized_images(self, x, points):
+        rotation_matrices = self.min_energy(points)
+        #code for affine matrix from rotation matrices
+        affine_matrices = torch.cat([rotation_matrices, torch.zeros_like(rotation_matrices[:, :, :1])], dim=-1)
+        x_canonized = K.geometry.affine(x, affine_matrices)
+        return x_canonized
+
+    def forward(self, images, points):
+        #breakpoint()
+        batch_size = points.shape[0]
+        images_canonized = self.get_canonized_images(images, points)
+        reps = self.encoder(images_canonized)
+        reps = reps.view(batch_size, -1)
+        return self.predictor(reps)
+
+    def gram_schmidt(self, vectors):
+        v1 = vectors[:, 0]
+        v1 = v1 / torch.norm(v1, dim=1, keepdim=True)
+        v2 = (vectors[:, 1] - torch.sum(vectors[:, 1] * v1, dim=1, keepdim=True) * v1)
+        v2 = v2 / torch.norm(v2, dim=1, keepdim=True)
+        return torch.stack([v1, v2], dim=1)
+
+
 
 class BasicConvEncoder(nn.Module):
     def __init__(self, in_shape, out_channels, num_layers=6):
@@ -255,3 +319,64 @@ class Identity(nn.Module):
 
     def forward(self, x):
         return x
+
+class CustomSetLayer(nn.Module):
+    def __init__(self, in_dim, out_dim, pooling="sum"):
+        super().__init__()
+        self.in_dim = in_dim
+        self.out_dim = out_dim
+        self.pooling = pooling
+
+        self.identity_linear = nn.Linear(in_dim, out_dim)
+        self.pooling_linear = nn.Linear(in_dim, out_dim)
+
+    def forward(self, points):
+        '''
+        :param points: shape (batch_size, num_points, in_dim)
+        :return:
+            output: shape (batch_size, num_points, out_dim)
+        '''
+        identity = self.identity_linear(points)
+        if self.pooling == "sum":
+            pooled_set = points.sum(dim=1)
+        elif self.pooling == "mean":
+            pooled_set = points.mean(dim=1)
+        else:
+            raise NotImplementedError
+        pooling = self.pooling_linear(pooled_set)
+
+        output = F.relu(identity + pooling[:, None, :])
+        if self.in_dim == self.out_dim:
+            output += points
+
+        return output
+
+
+class CustomDeepSets(nn.Module):
+    def __init__(self, hyperparams):
+        super().__init__()
+        self.start_layer = nn.Linear(3, hyperparams.hidden_dim)    # 3 for (x, y, pixel value)
+        self.set_layers = SequentialMultiple(
+            *[CustomSetLayer(
+                hyperparams.hidden_dim, hyperparams.hidden_dim, hyperparams.layer_pooling
+            ) for i in range(hyperparams.num_layers - 1)]
+        )
+        self.output_layer = SequentialMultiple(nn.Linear(hyperparams.hidden_dim, 1), nn.Sigmoid())
+        self.final_pooling = hyperparams.final_pooling
+
+    def forward(self, points):
+        '''
+        :param points: shape (batch_size, num_points, 3)   # 3 for (x, y, pixel value)
+        :return:
+            output: shape (batch_size, 1)
+        '''
+        embeddings = self.start_layer(points)
+        x = self.set_layers(embeddings)
+        if self.final_pooling == "sum":
+            x = x.sum(dim=1)
+        elif self.final_pooling == "mean":
+            x = x.mean(dim=1)
+        else:
+            raise NotImplementedError
+        output = self.output_layer(x)
+        return output

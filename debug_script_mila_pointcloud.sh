@@ -2,6 +2,7 @@
 
 # To train on so3
 python -m canonical_network.train_shapenet --run_mode train --model DGCNN --train_rotation so3 --use_checkpointing 0
+python -m canonical_network.train_shapenet --run_mode train --model equivariant_pointcloud_model --train_rotation z --data_path $data_path --num_epochs 250 --pred_model_type DGCNN --use_wandb 1 --num_workers 8
 
 # To train on z
 python -m canonical_network.train_shapenet --run_mode train --model pointnet --train_rotation z

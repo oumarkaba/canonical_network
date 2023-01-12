@@ -71,16 +71,19 @@ def train_pointnet():
         os.environ["WANDB_MODE"] = "online"
 
     if hyperparams.use_checkpointing:
-        if hyperparams.model is not "equivariant_pointcloud_model":
-            hyperparams.checkpoint_path = hyperparams.checkpoint_path + "/" + hyperparams.dataset + "/" + hyperparams.model \
-                                          + "/train_rotation_" + hyperparams.train_rotation
-            checkpoint_name = f"{hyperparams.model}_seed_{hyperparams.seed}"
-        else:
+        if hyperparams.model == "equivariant_pointcloud_model":
             hyperparams.checkpoint_path = hyperparams.checkpoint_path + "/" + hyperparams.dataset + "/" + hyperparams.model \
                                           + "/" + hyperparams.pred_model_type + "/train_rotation_" + hyperparams.train_rotation
             checkpoint_name = f"{hyperparams.model}_" \
-                            f"canon_model_{hyperparams.canon_model_type}"\
-                            f"_seed_{hyperparams.seed}"
+                              f"canon_model_{hyperparams.canon_model_type}" \
+                              f"_seed_{hyperparams.seed}"
+
+        else:
+            hyperparams.checkpoint_path = hyperparams.checkpoint_path + "/" + hyperparams.dataset + "/" + hyperparams.model \
+                                          + "/train_rotation_" + hyperparams.train_rotation
+            checkpoint_name = f"{hyperparams.model}_seed_{hyperparams.seed}"
+
+        print(f"Checkpoint path: {hyperparams.checkpoint_path}")
 
     wandb.init(config=hyperparams, entity=hyperparams.wandb_entity, project=hyperparams.wandb_project)
     wandb_logger = WandbLogger(project=hyperparams.wandb_project, log_model="all")

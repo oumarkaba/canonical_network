@@ -1,13 +1,7 @@
-import numpy as np
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.autograd import Variable
+
 import pytorch_lightning as pl
 from pytorch3d.transforms import RotateAxisAngle, Rotate, random_rotations
-import torchmetrics.functional as tmf
-import wandb
-from torch.optim.lr_scheduler import ReduceLROnPlateau, CosineAnnealingLR, MultiStepLR
+from torch.optim.lr_scheduler import CosineAnnealingLR, MultiStepLR
 
 from canonical_network.utils import *
 from canonical_network.models.pointcloud_networks import STNkd, STN3d, VNSTNkd, Transform_Net, VNSmall
@@ -155,32 +149,16 @@ class BasePointcloudModel(pl.LightningModule):
         loss = self.get_loss(outputs, targets)
         self.append_to_metric_lists(points, predictions, targets)
 
-        if self.global_step == 0:
-            wandb.define_metric("valid/loss", summary="min")
-
         metrics = {"valid/loss": loss}
         self.log_dict(metrics, prog_bar=True)
         return outputs
 
     def validation_epoch_end(self, outputs):
-
-        if self.global_step == 0:
-            wandb.define_metric("valid/class_avg_iou", summary="max")
-            wandb.define_metric("valid/instance_avg_iou", summary="max")
-            wandb.define_metric("valid/accuracy", summary="max")
         
         accuracy, class_avg_accuracy, class_avg_iou, instance_avg_iou = self.get_metrics()
         self.log_dict(
             {"valid/accuracy": accuracy, "valid/class_avg_iou": class_avg_iou, "valid/instance_avg_iou": instance_avg_iou},
             prog_bar=True)
-
-        predictions = self.get_predictions(outputs)
-        self.logger.experiment.log(
-            {
-                "valid/logits": wandb.Histogram(predictions.to("cpu")),
-                "global_step": self.global_step,
-            }
-        )
 
     def get_loss(self, outputs, targets, smoothing=True):
         ''' Calculate cross entropy loss and apply label smoothing. '''

@@ -2,7 +2,6 @@
 
 import pytorch_lightning as pl
 from pytorch3d.transforms import RotateAxisAngle, Rotate, random_rotations
-import wandb
 from torch.optim.lr_scheduler import CosineAnnealingLR, StepLR
 
 from canonical_network.utils import *
@@ -107,10 +106,6 @@ class BasePointcloudClassificationModel(pl.LightningModule):
         return outputs
 
     def validation_epoch_end(self, outputs):
-
-        if self.global_step == 0:
-            wandb.define_metric("valid/instance_accuracy", summary="max")
-            wandb.define_metric("valid/class_accuracy", summary="max")
 
         self.class_acc[:, 2] = self.class_acc[:, 0] / self.class_acc[:, 1]
         class_acc = np.mean(self.class_acc[:, 2])

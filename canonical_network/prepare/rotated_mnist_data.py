@@ -1,12 +1,13 @@
 import os
-import argparse
 import urllib.request as url_req
 import zipfile
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 import pytorch_lightning as pl
-
+import canonical_network.utils as utils
+import torchvision.transforms.functional as tf
+from torchvision import transforms
 def obtain(dir_path):
     os.makedirs(dir_path, exist_ok=True)
     dir_path = os.path.expanduser(dir_path)
@@ -81,7 +82,7 @@ def custom_load_data(file_path):
     labels = torch.stack(label_list)
     return images, labels
 
-def get_dataset(dir_path, split='train'):
+def get_dataset(dir_path, split='train', mode='image'):
     if split == 'train':
         file_path = os.path.join(dir_path, 'mnist_rotated_train.amat')
     elif split == 'valid':
@@ -89,27 +90,70 @@ def get_dataset(dir_path, split='train'):
     else:
         file_path = os.path.join(dir_path, 'mnist_rotated_test.amat')
     images, labels = custom_load_data(file_path)
+    if mode == 'image':
+        dataset = TensorDataset(images, labels)
+    elif mode == 'set':
+        sets = [bw_image_to_set(img) for img in images]
+        labels = labels.unsqueeze(-1)
+        dataset = utils.SetDataset(sets, labels)
+    elif mode == 'mixed':
+        sets = [image_to_set(img) for img in images]
+        dataset = utils.ImageSetMixedDataset(images, sets, labels)
+    else:
+        raise NotImplementedError
 
-    dataset = TensorDataset(images, labels)
     return dataset
+
+def bw_image_to_set(img, threshold=0.5):
+
+    idx = (img.view(28, 28).squeeze(0) > threshold).nonzero()  # assumes MNIST 28x28 image
+    idx = idx.float() / 27  # range [0, 1]
+    idx = (idx - 0.5) * 2  # range [-1, 1]
+    return idx
+
+def image_to_set(img):
+    # reshape the image first to 14 * 14
+    im_size = 14
+    trans = transforms.Compose([transforms.ToPILImage(),
+                                transforms.Resize((im_size, im_size)),
+                                transforms.ToTensor()])
+    img = trans(img.reshape(28, 28))
+    xs = np.linspace(-1, 1, num=im_size)
+    ys = np.linspace(1, -1, num=im_size)
+    x, y = np.meshgrid(xs, ys, )
+    x, y = torch.tensor(x).float(), torch.tensor(y).float()
+    # concatenate x and y with the pixel values of the image
+    image_set = torch.cat([x.reshape(-1, 1), y.reshape(-1, 1), img.reshape(-1, 1)], dim=-1)
+    return image_set
 
 
 class RotatedMNISTDataModule(pl.LightningDataModule):
-    def __init__(self, hyperparams, download=False):
+    def __init__(self, hyperparams, download=False, mode='image'):
+        '''
+        Args:
+            :param hyperparams: hyperparameters
+            :param download: whether to download the dataset
+            :param mode: model of dataset image or set or mixed
+        '''
         super().__init__()
         self.data_path = hyperparams.data_path
         self.hyperparams = hyperparams
         if download == True:
             obtain(self.data_path)
+        self.mode = mode
+        if self.mode == 'set':
+            self.collate_fn = utils.combine_set_data_sparse
+        else:
+            self.collate_fn = None
 
     def setup(self, stage=None):
         if stage == "fit" or stage is None:
-            self.train_dataset = get_dataset(self.data_path, split='train')
-            self.valid_dataset = get_dataset(self.data_path, split='valid')
+            self.train_dataset = get_dataset(self.data_path, split='train', mode=self.mode)
+            self.valid_dataset = get_dataset(self.data_path, split='test', mode=self.mode)
             print('Train dataset size: ', len(self.train_dataset))
             print('Valid dataset size: ', len(self.valid_dataset))
         if stage == "test":
-            self.test_dataset = get_dataset(self.data_path, split='test')
+            self.test_dataset = get_dataset(self.data_path, split='test', mode=self.mode)
             print('Test dataset size: ', len(self.test_dataset))
 
     def train_dataloader(self):
@@ -118,6 +162,7 @@ class RotatedMNISTDataModule(pl.LightningDataModule):
             self.hyperparams.batch_size,
             shuffle=True,
             num_workers=self.hyperparams.num_workers,
+            collate_fn=self.collate_fn,
         )
         return train_loader
 
@@ -127,6 +172,7 @@ class RotatedMNISTDataModule(pl.LightningDataModule):
             self.hyperparams.batch_size,
             shuffle=False,
             num_workers=self.hyperparams.num_workers,
+            collate_fn=self.collate_fn,
         )
         return valid_loader
 
@@ -136,6 +182,7 @@ class RotatedMNISTDataModule(pl.LightningDataModule):
             self.hyperparams.batch_size,
             shuffle=False,
             num_workers=self.hyperparams.num_workers,
+            collate_fn=self.collate_fn,
         )
         return test_loader
 
