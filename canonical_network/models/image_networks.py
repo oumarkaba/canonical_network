@@ -222,13 +222,11 @@ class OptimizationCanonizationNetwork(nn.Module):
         #n_angles = 4
         #angles = 2 * torch.pi * torch.arange(n_angles) / n_angles
         #self.register_buffer('initial_rotation', self.generate_rotations(angles))
-        self.register_buffer('initial_rotation', torch.zeros(2, 2))
 
     @torch.enable_grad()
     def min_energy(self, points):
         batch_size = points.shape[0]
-        rotation = self.initial_rotation.clone().requires_grad_(True).unsqueeze(0).expand(batch_size, -1, -1)
-        rotation = self.gram_schmidt(rotation + torch.randn_like(rotation))
+        rotation_angle = torch.zeros(batch_size, device=points.device).requires_grad_(True)
         #rotations = self.initial_rotation.clone().requires_grad_(True).unsqueeze(0).expand(batch_size, -1, -1, -1)
         #rotated_points = self.apply_rotations_to_points(points, rotations)
         #n_rotations = rotations.size(1)
@@ -238,20 +236,27 @@ class OptimizationCanonizationNetwork(nn.Module):
         #best_rotation = rotations.gather(1, indices.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, 2, 2))
         #return best_rotation.squeeze(1)
 
+        m = torch.zeros_like(rotation_angle)
         for i in range(self.iters):
             if self.implicit:
-                rotation = rotation.detach()
-                rotation.requires_grad_(True)
+                rotation_angle = rotation_angle.detach()
+                rotation_angle.requires_grad_(True)
+            rotation = self.generate_rotations(rotation_angle)
+
             rotated_coord = torch.bmm(points[:,:,:2], rotation)
             rotated = torch.cat([rotated_coord, points[:,:,2:]], dim=-1)
             energy = self.energy(rotated)
-            print(energy[0])
-            g, = torch.autograd.grad(energy.sum(), rotation, only_inputs=True,
+            print(i, 'e', energy[0])
+            g, = torch.autograd.grad(energy.sum(), rotation_angle, only_inputs=True,
                                      create_graph=(i == self.iters - 1) if self.implicit else True)
-            rotation = rotation - self.lr * g
-            rotation = self.gram_schmidt(rotation)
-            print(rotation[0])
-        return rotation
+            if m is None:
+                m = g
+            else:
+                m = 0.5 * g
+            rotation_angle = rotation_angle - self.lr * m
+            print(i, '  g', g[0])
+            print(i, '    a', rotation_angle[0])
+        return self.generate_rotations(rotation_angle)
 
     def apply_rotations_to_points(self, points, rotation):
         coords, data = points[:, :, :2], points[:, :, 2:]
@@ -393,7 +398,7 @@ class CustomDeepSets(nn.Module):
                 hyperparams.hidden_dim, hyperparams.hidden_dim, hyperparams.layer_pooling
             ) for i in range(hyperparams.num_layers - 1)]
         )
-        self.output_layer = SequentialMultiple(nn.Linear(hyperparams.hidden_dim, 1), nn.Sigmoid())
+        self.output_layer = SequentialMultiple(nn.Linear(hyperparams.hidden_dim, 1))
         self.final_pooling = hyperparams.final_pooling
 
     def forward(self, points):

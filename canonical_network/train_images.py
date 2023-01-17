@@ -49,8 +49,8 @@ def get_hyperparams():
     # Hyperparameters for the energy based model and Deepset
     parser.add_argument("--num_layers", type=int, default=6, help="number of deepset layers")
     parser.add_argument("--hidden_dim", type=int, default=64, help="hidden dimension for deepset")
-    parser.add_argument("--layer_pooling", type=str, default="mean", help="pooling for deepset intermediate layers")
-    parser.add_argument("--final_pooling", type=str, default="mean", help="pooling for deepset final layer")
+    parser.add_argument("--layer_pooling", type=str, default="max", help="pooling for deepset intermediate layers")
+    parser.add_argument("--final_pooling", type=str, default="max", help="pooling for deepset final layer")
     parser.add_argument("--num_optimization_iters", type=int, default=20, help="number of optimization iterations for the energy based model")
     parser.add_argument("--rot_opt_lr", type=float, default=0.01, help="number of samples for the energy based model")
     parser.add_argument("--implicit", type=int, default=0, help="whether to use implicit rotation optimization")
