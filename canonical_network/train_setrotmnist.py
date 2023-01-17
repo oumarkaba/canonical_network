@@ -12,7 +12,7 @@ from canonical_network.models.set_model import SET_HYPERPARAMS, SetModel
 from canonical_network.models.set_base_models import DeepSets, Transformer, Permutation, CanonicalDeepSets
 
 HYPERPARAMS = {
-    "model": "canonicaldeepsets",
+    "model": "deepsets",
     "batch_size": 64,
     "dryrun": False,
     "num_epochs": 500,

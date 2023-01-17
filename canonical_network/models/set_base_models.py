@@ -152,7 +152,7 @@ class SetLayer(pl.LightningModule):
     def forward(self, x, set_indices):
         identity = self.identity_linear(x)
 
-        pooled_set = ts.scatter(x, set_indices, 0, reduce=self.pooling)  / 100
+        pooled_set = ts.scatter(x, set_indices, 0, reduce=self.pooling)
         pooling = self.pooling_linear(pooled_set)
         pooling = torch.index_select(pooling, 0, set_indices)
 
@@ -179,7 +179,7 @@ class DeepSets(ClassificationSetModel):
         embeddings = self.embedding_layer(x)
         x, _ = self.set_layers(embeddings, set_indices[:, 0])
         if self.final_pooling:
-            x = ts.scatter(x, set_indices[:, 0], 0, reduce=self.final_pooling) / 100
+            x = ts.scatter(x, set_indices[:, 0], 0, reduce=self.final_pooling)
         output = self.output_layer(x)
         return output
 
@@ -216,15 +216,16 @@ class CanonicalDeepSets(ClassificationSetModel):
             if self.implicit:
                 rotation = rotation.detach()
                 rotation.requires_grad_(True)
-#            rotated = dgl.ops.gather_mm(input, rotation, idx_b=indices[:, 0])
-            rotated = torch.einsum('nc, ncd -> nd', input, rotation.gather(0, indices.unsqueeze(-1).expand(-1, -1, 2)))
+            rotated = dgl.ops.gather_mm(input, rotation, idx_b=indices[:, 0])
+#            rotated = torch.einsum('nc, ncd -> nd', input, rotation.gather(0, indices.unsqueeze(-1).expand(-1, -1, 2)))
             energy = self.energy(rotated, indices, None).sum()
             g, = torch.autograd.grad(energy, rotation, only_inputs=True, create_graph=(i == self.iters - 1) if self.implicit else True)
             rotation = rotation - self.lr * g
             rotation = self.gram_schmidt(rotation)
             print(i)
             print(rotation[0])
-        rotated = torch.einsum('nc, ncd -> nd', input, rotation.gather(0, indices.unsqueeze(-1).expand(-1, -1, 2)))
+        rotated = dgl.ops.gather_mm(input, rotation, idx_b=indices[:, 0])
+        #rotated = torch.einsum('nc, ncd -> nd', input, rotation.gather(0, indices.unsqueeze(-1).expand(-1, -1, 2)))
         return rotated, rotation
 
     def gram_schmidt(self, vectors):
