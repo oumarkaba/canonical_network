@@ -28,6 +28,7 @@ NBODY_HYPERPARAMS = {
     "canon_translation": False,
     "canon_angular_feature": 0,
     "canon_dropout": 0.5,
+    "freeze_canon": False,
 }
 
 
@@ -132,6 +133,9 @@ class EuclideanGraphModel(BaseEuclideangraphModel):
 
         self.canon_function = EuclideangraphCanonFunction(hyperparams)
         self.pred_function = EuclideangraphPredFunction(hyperparams)
+
+        if hyperparams.freeze_canon:
+            self.canon_function.freeze()
 
     def forward(self, nodes, loc, edges, vel, edge_attr, charges):
         rotation_matrix, translation_vectors = self.canon_function(nodes, loc, edges, vel, edge_attr, charges)

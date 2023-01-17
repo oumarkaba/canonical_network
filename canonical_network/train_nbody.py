@@ -8,7 +8,7 @@ from canonical_network.prepare.nbody_data import NBodyDataModule
 from canonical_network.models.euclideangraph_model import NBODY_HYPERPARAMS, EuclideanGraphModel
 from canonical_network.models.euclideangraph_base_models import EGNN_vel, GNN, VNDeepSets
 
-HYPERPARAMS = {"model": "euclideangraph_model", "canon_model_type": "vndeepsets", "pred_model_type": "GNN", "batch_size": 100, "dryrun": False, "use_wandb": True, "checkpoint": True, "num_epochs": 10000, "num_workers":0, "auto_tune":False, "seed": 0}
+HYPERPARAMS = {"model": "euclideangraph_model", "canon_model_type": "vndeepsets", "pred_model_type": "GNN", "batch_size": 100, "dryrun": False, "use_wandb": False, "checkpoint": False, "num_epochs": 10000, "num_workers":0, "auto_tune":False, "seed": 0}
 
 def train_nbody():
     hyperparams = HYPERPARAMS | NBODY_HYPERPARAMS
