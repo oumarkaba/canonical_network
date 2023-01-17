@@ -222,12 +222,13 @@ class OptimizationCanonizationNetwork(nn.Module):
         #n_angles = 4
         #angles = 2 * torch.pi * torch.arange(n_angles) / n_angles
         #self.register_buffer('initial_rotation', self.generate_rotations(angles))
-        self.register_buffer('initial_rotation', torch.eye(2))
+        self.register_buffer('initial_rotation', torch.zeros(2, 2))
 
     @torch.enable_grad()
     def min_energy(self, points):
         batch_size = points.shape[0]
         rotation = self.initial_rotation.clone().requires_grad_(True).unsqueeze(0).expand(batch_size, -1, -1)
+        rotation = self.gram_schmidt(rotation + torch.randn_like(rotation))
         #rotations = self.initial_rotation.clone().requires_grad_(True).unsqueeze(0).expand(batch_size, -1, -1, -1)
         #rotated_points = self.apply_rotations_to_points(points, rotations)
         #n_rotations = rotations.size(1)
@@ -243,13 +244,13 @@ class OptimizationCanonizationNetwork(nn.Module):
                 rotation.requires_grad_(True)
             rotated_coord = torch.bmm(points[:,:,:2], rotation)
             rotated = torch.cat([rotated_coord, points[:,:,2:]], dim=-1)
-            energy = self.energy(rotated).sum()
-            g, = torch.autograd.grad(energy, rotation, only_inputs=True,
+            energy = self.energy(rotated)
+            print(energy[0])
+            g, = torch.autograd.grad(energy.sum(), rotation, only_inputs=True,
                                      create_graph=(i == self.iters - 1) if self.implicit else True)
             rotation = rotation - self.lr * g
             rotation = self.gram_schmidt(rotation)
             print(rotation[0])
-            print(energy.item())
         return rotation
 
     def apply_rotations_to_points(self, points, rotation):
@@ -370,6 +371,8 @@ class CustomSetLayer(nn.Module):
             pooled_set = points.sum(dim=1)
         elif self.pooling == "mean":
             pooled_set = points.mean(dim=1)
+        elif self.pooling == "max":
+            pooled_set = points.max(dim=1)[0]
         else:
             raise NotImplementedError
         pooling = self.pooling_linear(pooled_set)
@@ -405,6 +408,8 @@ class CustomDeepSets(nn.Module):
             x = x.sum(dim=1)
         elif self.final_pooling == "mean":
             x = x.mean(dim=1)
+        elif self.final_pooling == "max":
+            x = x.max(dim=1)[0]
         else:
             raise NotImplementedError
         output = self.output_layer(x)
