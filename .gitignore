@@ -1,4 +1,5 @@
 canonical_network-digits
+pyproject.toml
 wandb
 .venv
 .python-version
