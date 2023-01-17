@@ -219,12 +219,24 @@ class OptimizationCanonizationNetwork(nn.Module):
         else:
             raise ValueError('Base encoder output shape must be 2 or 4 dimensional.')
 
+        #n_angles = 4
+        #angles = 2 * torch.pi * torch.arange(n_angles) / n_angles
+        #self.register_buffer('initial_rotation', self.generate_rotations(angles))
         self.register_buffer('initial_rotation', torch.eye(2))
 
     @torch.enable_grad()
     def min_energy(self, points):
         batch_size = points.shape[0]
         rotation = self.initial_rotation.clone().requires_grad_(True).unsqueeze(0).expand(batch_size, -1, -1)
+        #rotations = self.initial_rotation.clone().requires_grad_(True).unsqueeze(0).expand(batch_size, -1, -1, -1)
+        #rotated_points = self.apply_rotations_to_points(points, rotations)
+        #n_rotations = rotations.size(1)
+        #energy = self.energy(rotated_points.flatten(0, 1)).view(-1, n_rotations)
+        #_, indices = energy.min(dim=1, keepdim=True)
+        #indices = torch.ones(points.size(0), 1, device=points.device).long()
+        #best_rotation = rotations.gather(1, indices.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, 2, 2))
+        #return best_rotation.squeeze(1)
+
         for i in range(self.iters):
             if self.implicit:
                 rotation = rotation.detach()
@@ -236,9 +248,20 @@ class OptimizationCanonizationNetwork(nn.Module):
                                      create_graph=(i == self.iters - 1) if self.implicit else True)
             rotation = rotation - self.lr * g
             rotation = self.gram_schmidt(rotation)
-            # print(rotation[0])
-            # print(energy.item())
+            print(rotation[0])
+            print(energy.item())
         return rotation
+
+    def apply_rotations_to_points(self, points, rotation):
+        coords, data = points[:, :, :2], points[:, :, 2:]
+        new_coords = torch.einsum('nsc, nrcd -> nrsd', coords, rotation)
+        # new shape is (batch, rotations, set, dimensions)
+        return torch.cat([new_coords, data.unsqueeze(1).expand(-1, rotation.size(1), -1, -1)], dim=3)
+
+    def generate_rotations(self, angles):
+        rotations = torch.stack([torch.cos(angles), torch.sin(angles), -torch.sin(angles), torch.cos(angles)], dim=1)
+        rotations = rotations.view(-1, 2, 2)
+        return rotations
 
 
     def get_canonized_images(self, x, points):

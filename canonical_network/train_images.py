@@ -21,7 +21,7 @@ def get_hyperparams():
                         help="different run modes 1)image 2)mixed (mixed has both image and pointcloud grid representation for deepsets)")
     parser.add_argument("--batch_size", type=int, default=256, help="batch size")
     parser.add_argument("--run_mode", type=str, default='dryrun', help="different run modes 1)dryrun 2)train 3)test 4)auto_tune")
-    parser.add_argument("--use_wandb", type=int, default=0, help="use wandb")
+    parser.add_argument("--use_wandb", type=int, default=True, help="use wandb")
     parser.add_argument("--num_epochs", type=int, default=100, help="number of epochs")
     parser.add_argument("--patience", type=int, default=20, help="patience for early stopping")
     parser.add_argument("--num_workers", type=int, default=4, help="number of workers")
@@ -41,7 +41,7 @@ def get_hyperparams():
     parser.add_argument("--checkpoint_path", type=str, default="canonical_network/results", help="path to checkpoint")
     parser.add_argument("--deterministic", type=bool, default=False, help="deterministic training")
     parser.add_argument("--wandb_project", type=str, default="canonical_network", help="wandb project name")
-    parser.add_argument("--wandb_entity", type=str, default="symmetry_group", help="wandb entity name")
+    parser.add_argument("--wandb_entity", type=str, default="cyanogenoid", help="wandb entity name")
     parser.add_argument("--save_canonized_images", type=int, default=0, help="save canonized images")
     parser.add_argument("--check_invariance", type=int, default=0, help="check if the network is invariant")
     parser.add_argument("--num_channels", type=int, default=20, help="num_channels for equivariant cnn base encoder")
@@ -116,12 +116,12 @@ def train_images():
         wandb.watch(model.network.canonization_network, log='all')
 
     if hyperparams.run_mode == "auto_tune":
-        trainer = pl.Trainer(max_epochs=hyperparams.num_epochs, accelerator="auto", auto_scale_batch_size=True, auto_lr_find=True, logger=wandb_logger, callbacks=callbacks, deterministic=hyperparams.deterministic)
+        trainer = pl.Trainer(max_epochs=hyperparams.num_epochs, accelerator="auto", auto_scale_batch_size=True, auto_lr_find=True, logger=wandb_logger, callbacks=callbacks, deterministic=hyperparams.deterministic, inference_mode=False)
         trainer.tune(model, datamodule=image_data)
     elif hyperparams.run_mode == "dryrun":
-        trainer = pl.Trainer(fast_dev_run=2, max_epochs=hyperparams.num_epochs, accelerator="auto", limit_train_batches=5, limit_val_batches=5, logger=wandb_logger, callbacks=callbacks, deterministic=hyperparams.deterministic)
+        trainer = pl.Trainer(fast_dev_run=2, max_epochs=hyperparams.num_epochs, accelerator="auto", limit_train_batches=5, limit_val_batches=5, logger=wandb_logger, callbacks=callbacks, deterministic=hyperparams.deterministic, inference_mode=False)
     else:
-        trainer = pl.Trainer(max_epochs=hyperparams.num_epochs, accelerator="auto", logger=wandb_logger, callbacks=callbacks, deterministic=hyperparams.deterministic)
+        trainer = pl.Trainer(max_epochs=hyperparams.num_epochs, accelerator="auto", logger=wandb_logger, callbacks=callbacks, deterministic=hyperparams.deterministic, inference_mode=False, limit_val_batches=100, check_val_every_n_epoch=10)
 
     if hyperparams.run_mode == "train":
         trainer.fit(model, datamodule=image_data)
