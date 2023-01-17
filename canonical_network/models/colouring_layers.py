@@ -22,8 +22,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
-
 class SetDropout(nn.Module):
     def __init__(self,p_drop):
         super().__init__()
@@ -78,20 +76,22 @@ class Conv2dSridhar(nn.Module):
 
 
 class Conv2dSiamese(nn.Module):
-    def __init__(self,in_channels, out_channels, kernel_size,padding=1):
+    def __init__(self,in_channels, out_channels, kernel_size,padding=1, residual=False):
         super().__init__()
+        self.in_channels = in_channels
         self.out_channels = out_channels
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, padding=padding)
         torch.nn.init.xavier_normal_(self.conv.weight)
         self.bn = nn.BatchNorm2d(num_features=out_channels)
+        self.residual = residual
 
 
     def forward(self, x):
         b,n,c,h,w = x.size()
-        x = x.view(b*n,c,h,w)
-        x = self.bn(self.conv(x))
-        x = x.view(b, n, self.out_channels, h, w)
-        return x
+        inp = x.view(b*n,c,h,w)
+        out = self.bn(self.conv(inp))
+        out = out.view(b, n, self.out_channels, h, w)
+        return x + out if self.residual else out
 
 
 class Conv2d(nn.Module):
@@ -173,7 +173,7 @@ class SetUpsample(nn.Module):
 
 
 class DeepSetsBlock(nn.Module):
-    def __init__(self,channels=(256, 128, 1)):
+    def __init__(self,channels=(256, 128, 1), residual=False):
         super(DeepSetsBlock, self).__init__()
         # layers
         self.channels = channels
@@ -192,6 +192,8 @@ class DeepSetsBlock(nn.Module):
         self.bn2s = torch.nn.BatchNorm1d(channels[1])
         self.bn3s = torch.nn.BatchNorm1d(channels[2])
 
+        self.residual = residual
+
         # initializations
         torch.nn.init.xavier_normal_(self.fc_1.weight)
         torch.nn.init.xavier_normal_(self.fc_2.weight)
@@ -206,8 +208,8 @@ class DeepSetsBlock(nn.Module):
         x1 = self.bn1(self.fc_1(x_col))
         x2 = self.fc_1s(torch.max(x, dim=1, keepdim=False)[0])
         x2 = self.bn1s(x2.view(b,1,self.channels[0]).repeat(1,n,1).view(b*n,self.channels[0]))
-        x = x1 + x2
-        x = F.relu(x)
+        out = x1 + x2
+        x = F.relu(out) + x_col if self.residual else F.relu(out)
         x = x.view(b,n,self.channels[0])
 
         x_col = x.view(b * n, self.channels[0])
@@ -215,7 +217,7 @@ class DeepSetsBlock(nn.Module):
         x2 = self.fc_2s(torch.max(x, dim=1, keepdim=False)[0])
         x2 = self.bn2s(x2.view(b, 1, self.channels[1]).repeat(1, n, 1).view(b * n, self.channels[1]))
         x = x1 + x2
-        x = F.relu(x)
+        x = F.relu(out) + x_col if self.residual else F.relu(out)
         x = x.view(b, n, self.channels[1])
 
         x_col = x.view(b * n, self.channels[1])

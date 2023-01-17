@@ -7,7 +7,7 @@ import os
 from canonical_network.prepare.colors_data import ColorsDataModule
 from canonical_network.models.colouring_base_models import UNet
 
-HYPERPARAMS = {"dataset":"celeba", "model_type":"deepsets", "p_drop": 0.0, "use_max": False, "batch_size": 32, "dryrun": False, "use_wandb": False, "checkpoint": False, "num_epochs": 1000, "num_workers":0, "auto_tune":False, "seed": 0, "learning_rate": 1e-3}
+HYPERPARAMS = {"dataset":"celeba", "model_type":"canonical", "p_drop": 0.0, "use_max": False, "batch_size": 32, "dryrun": False, "use_wandb": False, "checkpoint": False, "num_epochs": 100, "num_workers":0, "auto_tune":False, "seed": 0, "learning_rate": 1e-3, "sort_reg":1e-3, "patience": 50, "parameters_factor": 2}
 
 def train_colors():
     hyperparams = HYPERPARAMS
