@@ -244,7 +244,13 @@ class OptimizationCanonizationNetwork(nn.Module):
     def get_canonized_images(self, x, points):
         rotation_matrices = self.min_energy(points)
         #code for affine matrix from rotation matrices
-        affine_matrices = torch.cat([rotation_matrices, torch.zeros_like(rotation_matrices[:, :, :1])], dim=-1)
+        # https://kornia.readthedocs.io/en/v0.1.2/geometric.html#torchgeometry.get_rotation_matrix2d
+        alpha = rotation_matrices[:, 0, 0]
+        beta = rotation_matrices[:, 0, 1]
+        cx = cy = 28/2
+        affine_part = torch.stack([(1 - alpha) * cx - beta * cy, beta * cx + (1 - alpha) * cy], dim=1)
+        affine_matrices = torch.cat([rotation_matrices, affine_part.unsqueeze(-1)], dim=-1)
+
         x_canonized = K.geometry.affine(x, affine_matrices)
         return x_canonized
 
@@ -347,7 +353,7 @@ class CustomSetLayer(nn.Module):
 
         output = F.relu(identity + pooling[:, None, :])
         if self.in_dim == self.out_dim:
-            output += points
+            output = output + points
 
         return output
 
