@@ -13,7 +13,7 @@ from canonical_network.utils import define_hyperparams, dict_to_object
 NBODY_HYPERPARAMS = {
     "learning_rate": 1e-3,
     "weight_decay": 1e-12,
-    "patience": 1000,
+    "patience": 10000,
     "hidden_nf": 64,
     "input_dim": 6,
     "in_node_nf": 1,
@@ -24,7 +24,7 @@ NBODY_HYPERPARAMS = {
     "canon_layer_pooling": "mean",
     "canon_final_pooling": "mean",
     "canon_nonlinearity": "relu",
-    "canon_feature": "p",
+    "canon_feature": "pv",
     "canon_translation": False,
     "canon_angular_feature": 0,
     "canon_dropout": 0.5,
