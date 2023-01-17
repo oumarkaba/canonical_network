@@ -9,10 +9,10 @@ import wandb
 import canonical_network.utils as utils
 from canonical_network.prepare.rotated_mnist_data import RotatedMNISTDataModule
 from canonical_network.models.set_model import SET_HYPERPARAMS, SetModel
-from canonical_network.models.set_base_models import DeepSets, Transformer, Permutation
+from canonical_network.models.set_base_models import DeepSets, Transformer, Permutation, CanonicalDeepSets
 
 HYPERPARAMS = {
-    "model": "deepsets",
+    "model": "canonicaldeepsets",
     "batch_size": 64,
     "dryrun": False,
     "num_epochs": 500,
@@ -36,8 +36,8 @@ def train_digits():
 
     set_data = RotatedMNISTDataModule(set_hypeyparams, setify=True)
 
-    checkpoint_callback = ModelCheckpoint(dirpath="canonical_network/results/digits/model_saves", filename= set_hypeyparams.model + "_" + wandb.run.name + "_{epoch}_{valid/f1_score:.3f}", monitor="valid/f1_score", mode="max")
-    early_stop_metric_callback = EarlyStopping(monitor="valid/f1_score", min_delta=0.0, patience=50, verbose=True, mode="max")
+    checkpoint_callback = ModelCheckpoint(dirpath="canonical_network/results/digits/model_saves", filename= set_hypeyparams.model + "_" + wandb.run.name + "_{epoch}_{valid/accuracy:.3f}", monitor="valid/accuracy", mode="max")
+    early_stop_metric_callback = EarlyStopping(monitor="valid/accuracy", min_delta=0.0, patience=50, verbose=True, mode="max")
     early_stop_lr_callback = EarlyStopping(monitor="lr", min_delta=0.0, patience=10000, verbose=True, mode="min", stopping_threshold=1.1e-6)
     callbacks = [checkpoint_callback, early_stop_lr_callback, early_stop_metric_callback]
 
@@ -45,11 +45,12 @@ def train_digits():
         "set_model": lambda: SetModel(set_hypeyparams),
         "deepsets": lambda: DeepSets(set_hypeyparams),
         "transformer": lambda: Transformer(set_hypeyparams),
+        "canonicaldeepsets": lambda: CanonicalDeepSets(set_hypeyparams),
         # "permutation": lambda: Permutation(set_hypeyparams),
     }[set_hypeyparams.model]()
 
     # accel = 'cpu' if set_hypeyparams.model != 'transformer' else 'auto'
-    accel = 'cpu'
+    accel = 'auto'
 
     if set_hypeyparams.auto_tune:
         trainer = pl.Trainer(fast_dev_run=set_hypeyparams.dryrun, max_epochs=set_hypeyparams.num_epochs, accelerator=accel, auto_scale_batch_size=True, auto_lr_find=True, logger=wandb_logger, callbacks=callbacks, deterministic=False)

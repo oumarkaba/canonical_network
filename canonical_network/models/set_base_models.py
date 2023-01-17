@@ -6,7 +6,8 @@ import pytorch_lightning as pl
 import torchmetrics.functional as tmf
 import wandb
 import torch_scatter as ts
-import torchsort
+#import torchsort
+import dgl
 
 
 class SequentialMultiple(nn.Sequential):
@@ -20,6 +21,7 @@ class SequentialMultiple(nn.Sequential):
 
 
 # Set model base class
+
 
 class BaseSetModel(pl.LightningModule):
     def __init__(self, hyperparams):
@@ -92,6 +94,49 @@ class BaseSetModel(pl.LightningModule):
             }
         )
 
+class ClassificationSetModel(BaseSetModel):
+    def __init__(self, hyperparams):
+        super().__init__(hyperparams)
+
+    def training_step(self, batch, batch_idx):
+        inputs, indices, targets = batch
+
+        output = self(inputs, indices, batch_idx)
+        predictions = self.get_predictions(output).squeeze()
+
+        loss = F.cross_entropy(predictions.squeeze(), targets.squeeze())
+        accuracy = tmf.accuracy(predictions, targets, task='multiclass', num_classes=10)
+
+        metrics = {"train/loss": loss, "train/accuracy": accuracy}
+        self.log_dict(metrics, on_epoch=True, batch_size=64)
+
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        inputs, indices, targets = batch
+
+        output = self(inputs, indices, batch_idx)
+        predictions = self.get_predictions(output)
+
+        loss = F.cross_entropy(predictions.squeeze(), targets.squeeze())
+        accuracy = tmf.accuracy( predictions, targets, task='multiclass', num_classes=10)  
+        # f1_score = tmf.f1_score(predictions, targets)
+
+        if self.global_step == 0:
+            wandb.define_metric("valid/loss", summary="min")
+            wandb.define_metric("valid/accuracy", summary="max")
+            # wandb.define_metric("valid/f1_score", summary="max")
+
+        metrics = {"valid/loss": loss, "valid/accuracy": accuracy}
+        self.log_dict(metrics, prog_bar=True, batch_size=64)
+        return output
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate, weight_decay=1e-10)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=20, factor=0.5, min_lr=1e-6, mode="max")
+        return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": "valid/accuracy"}
+
+
 # DeepSets model
 
 class SetLayer(pl.LightningModule):
@@ -107,7 +152,7 @@ class SetLayer(pl.LightningModule):
     def forward(self, x, set_indices):
         identity = self.identity_linear(x)
 
-        pooled_set = ts.scatter(x, set_indices, 0, reduce=self.pooling)
+        pooled_set = ts.scatter(x, set_indices, 0, reduce=self.pooling)  / 100
         pooling = self.pooling_linear(pooled_set)
         pooling = torch.index_select(pooling, 0, set_indices)
 
@@ -116,11 +161,12 @@ class SetLayer(pl.LightningModule):
         return output, set_indices
 
 
-class DeepSets(BaseSetModel):
+class DeepSets(ClassificationSetModel):
     def __init__(self, hyperparams):
         super().__init__(hyperparams)
         self.model = "deepsets"
-        self.embedding_layer = nn.Embedding(self.num_embeddings, self.hidden_dim)
+        # self.embedding_layer = nn.Embedding(self.num_embeddings, self.hidden_dim)
+        self.embedding_layer = nn.Linear(2, self.hidden_dim)
         self.set_layers = SequentialMultiple(
             *[SetLayer(self.hidden_dim, self.hidden_dim, self.layer_pooling) for i in range(self.num_layers - 1)]
         )
@@ -131,11 +177,62 @@ class DeepSets(BaseSetModel):
 
     def forward(self, x, set_indices, _):
         embeddings = self.embedding_layer(x)
-        x, _ = self.set_layers(embeddings, set_indices)
+        x, _ = self.set_layers(embeddings, set_indices[:, 0])
         if self.final_pooling:
-            x = ts.scatter(x, set_indices, reduce=self.final_pooling)
+            x = ts.scatter(x, set_indices[:, 0], 0, reduce=self.final_pooling) / 100
         output = self.output_layer(x)
         return output
+
+class CanonicalDeepSets(ClassificationSetModel):
+    def __init__(self, hyperparams):
+        super().__init__(hyperparams)
+        self.model = "canonicaldeepsets"
+        self.lr = 0.1
+        self.implicit = True
+        self.iters = 5
+
+        self.deepsets = DeepSets(hyperparams)
+        canon_hyperparams = dict(hyperparams)
+        canon_hyperparams['out_dim'] = 1
+        self.energy = DeepSets(hyperparams)  # use same model for now
+        self.register_buffer('initial_rotation', torch.eye(2))
+
+    def forward(self, x, set_indices, _):
+        rotated, rotation = self.min_energy(x, set_indices)
+        output = self.deepsets(rotated, set_indices, _)
+        # in this case, we don't necessarily care about undoing the rotation
+        return output
+    
+    @torch.enable_grad()
+    def min_energy(self, input, indices):
+        # currently the optimization is being performed on the rotations directly, with gram schmidt being
+        # used to project the modified matrix into a rotation again
+        # alternatively, this optimization can be done on the vectors that go into gram schmidt
+        real_batch_size = indices.max().item() + 1
+        rotation = self.initial_rotation.clone().requires_grad_(True).unsqueeze(0).expand(real_batch_size, -1, -1)
+        # print(rotation)
+        for i in range(self.iters):
+            if self.implicit:
+                rotation = rotation.detach()
+                rotation.requires_grad_(True)
+            rotated = dgl.ops.gather_mm(input, rotation, idx_b=indices[:, 0])
+            energy = self.energy(rotated, indices, None).sum()
+            g, = torch.autograd.grad(energy, rotation, only_inputs=True, create_graph=(i == self.iters - 1) if self.implicit else True)
+            rotation = rotation - self.lr * g
+            rotation = self.gram_schmidt(rotation)
+            print(i)
+            print(rotation[0])
+        rotated = dgl.ops.gather_mm(input, rotation, idx_b=indices[:, 0])
+        return rotated, rotation
+
+    def gram_schmidt(self, vectors):
+        v1 = vectors[:, 0]
+        v1 = v1 / torch.norm(v1, dim=1, keepdim=True)
+        v2 = (vectors[:, 1] - torch.sum(vectors[:, 1] * v1, dim=1, keepdim=True) * v1)
+        v2 = v2 / torch.norm(v2, dim=1, keepdim=True)
+        return torch.stack([v1, v2], dim=1)
+
+
 
 # Transformer
 
