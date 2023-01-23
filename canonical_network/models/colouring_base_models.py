@@ -57,7 +57,7 @@ from canonical_network.models.colouring_layers import \
     SetMaxPool2d,SetUpsample,DeepSetsBlock,DeepSetsBlockSiamese,MLPBlock,Conv2dSAittala,Conv2dSridhar, Conv2d
 
 
-def double_conv(in_channels, out_channels,model_type,p_drop, kernel_size=3,use_max=0):
+def double_conv(in_channels, out_channels,model_type,p_drop, kernel_size=3,use_max=0, depthwise=False):
     if model_type=='deepsets' or model_type == 'fullySiamese':
         return nn.Sequential(
             Conv2dSiamese(in_channels, out_channels, kernel_size,padding=int((kernel_size-1)/2)),
@@ -107,11 +107,12 @@ def double_conv(in_channels, out_channels,model_type,p_drop, kernel_size=3,use_m
             SetDropout(p_drop=p_drop)
         )
     elif model_type == "canonical":
+        groups = 6 if depthwise else 1
         return nn.Sequential(
-            Conv2d(in_channels, out_channels, 3, padding=1),
+            Conv2d(in_channels, out_channels, 3, padding=1, groups=groups),
             nn.ReLU(inplace=True),
             nn.Dropout2d(p=p_drop),
-            Conv2d(out_channels, out_channels, 3, padding=1),
+            Conv2d(out_channels, out_channels, 3, padding=1, groups=groups),
             nn.ReLU(inplace=True),
             nn.Dropout2d(p=p_drop)
         )
@@ -196,12 +197,15 @@ class UNet(pl.LightningModule):
         self.learning_rate = hyperparams.learning_rate if hasattr(hyperparams, "learning_rate") else None
         self.patience = hyperparams.patience
         self.parameters_factor = hyperparams.parameters_factor
+        self.depthwise_encoder = hyperparams.depthwise_encoder
+        self.depthwise_decoder = hyperparams.depthwise_decoder
+        self.weight_decay = hyperparams.weight_decay
 
         if self.model_type =='deepsets' or self.model_type == 'Sridhar':
             c = (3, 64, 128, 200, 300)
         elif self.model_type == 'canonical':
-            c = (18, 64, 128, 192, 320)
-            c = [c[0]] + [min(int(n/self.parameters_factor), 18) for n in c[1:]]
+            c = (18, 32, 64, 96, 128)
+            c = [c[0]] + [max(int(n/self.parameters_factor) * 6, 18) for n in c[1:]]
         elif self.model_type == 'Aittala':
             c = (3, 150, 200, 300, 320)
         elif self.model_type == 'DeepSymmetricNet':
@@ -210,10 +214,10 @@ class UNet(pl.LightningModule):
         if self.model_type == 'canonical':
             self.canonical_network = CanonicalNetwork()
 
-        self.dconv_down1 = double_conv(c[0], c[1],self.model_type,self.p_drop,use_max=self.use_max)
-        self.dconv_down2 = double_conv(c[1], c[2],self.model_type,self.p_drop,use_max=self.use_max)
-        self.dconv_down3 = double_conv(c[2], c[3],self.model_type,self.p_drop,use_max=self.use_max)
-        self.dconv_down4 = double_conv(c[3], c[4],self.model_type,self.p_drop,use_max=self.use_max)
+        self.dconv_down1 = double_conv(c[0], c[1],self.model_type,self.p_drop,use_max=self.use_max, depthwise=self.depthwise_encoder)
+        self.dconv_down2 = double_conv(c[1], c[2],self.model_type,self.p_drop,use_max=self.use_max, depthwise=self.depthwise_encoder)
+        self.dconv_down3 = double_conv(c[2], c[3],self.model_type,self.p_drop,use_max=self.use_max, depthwise=self.depthwise_encoder)
+        self.dconv_down4 = double_conv(c[3], c[4],self.model_type,self.p_drop,use_max=self.use_max, depthwise=self.depthwise_encoder)
 
         self.maxpool2 = nn.MaxPool2d(kernel_size = 2,stride=2) if self.model_type == "canonical" else SetMaxPool2d(stride=2)
         self.maxpool8 = nn.MaxPool2d(kernel_size = 2,stride=8) if self.model_type == "canonical" else SetMaxPool2d(stride=8)
@@ -223,17 +227,17 @@ class UNet(pl.LightningModule):
         self.upsample2 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True) if self.model_type == "canonical" else SetUpsample(scale_factor=2)
         self.upsample8 = nn.Upsample(scale_factor=8, mode='bilinear', align_corners=True) if self.model_type == "canonical" else SetUpsample(scale_factor=8)
 
-        self.dconv_up3 = double_conv(c[4] + c[4], c[3],self.model_type,self.p_drop,use_max=self.use_max)
-        self.dconv_up2 = double_conv(c[3] + c[3], c[2],self.model_type,self.p_drop,use_max=self.use_max)
-        self.dconv_up1 = double_conv(c[2] + c[2], c[2],self.model_type,self.p_drop,use_max=self.use_max)
+        self.dconv_up3 = double_conv(c[4] + c[4], c[3],self.model_type,self.p_drop,use_max=self.use_max, depthwise=self.depthwise_decoder)
+        self.dconv_up2 = double_conv(c[3] + c[3], c[2],self.model_type,self.p_drop,use_max=self.use_max, depthwise=self.depthwise_decoder)
+        self.dconv_up1 = double_conv(c[2] + c[2], c[2],self.model_type,self.p_drop,use_max=self.use_max, depthwise=self.depthwise_decoder)
 
         self.last_conv = last_conv(self.model_type,c,use_max=self.use_max)
 
 
     def forward(self, x):
         if self.model_type == 'canonical':
-            score = self.canonical_network(x)
-            x = self.sort(x, score)
+            # score = self.canonical_network(x)
+            # x = self.sort(x, score)
             x = x.view(-1, 18, 64, 64)
             
         conv1 = self.dconv_down1(x)
@@ -276,7 +280,7 @@ class UNet(pl.LightningModule):
 
         if self.model_type == 'canonical':
             out = out.view(-1, 6, 3, 64, 64)
-            out = self.unsort(out, score)
+            # out = self.unsort(out, score)
 
         return out
     
@@ -317,7 +321,7 @@ class UNet(pl.LightningModule):
         return x
 
 
-    def training_step(self, batch, batch_idx, optimizer_idx):
+    def training_step(self, batch, batch_idx):
         inputs, targets = batch
 
         predictions = self(inputs)
@@ -347,26 +351,30 @@ class UNet(pl.LightningModule):
         return super().on_after_backward()
 
     def configure_optimizers(self):
-        canonical_parameters = list(zip(*list(filter(lambda kv: "canonical_network" in kv[0], self.named_parameters()))))[1]
-        prediction_parameters = list(zip(*list(filter(lambda kv: "canonical_network" not in kv[0], self.named_parameters()))))[1]
+        # canonical_parameters = list(zip(*list(filter(lambda kv: "canonical_network" in kv[0], self.named_parameters()))))[1]
+        # prediction_parameters = list(zip(*list(filter(lambda kv: "canonical_network" not in kv[0], self.named_parameters()))))[1]
 
-        canonical_optimizer = torch.optim.Adam(canonical_parameters, lr=self.learning_rate, weight_decay=1e-8)
-        prediction_optimizer = torch.optim.Adam(prediction_parameters, lr=self.learning_rate, weight_decay=1e-8)
+        # canonical_optimizer = torch.optim.Adam(canonical_parameters, lr=self.learning_rate, weight_decay=1e-8)
+        # prediction_optimizer = torch.optim.Adam(prediction_parameters, lr=self.learning_rate, weight_decay=1e-8)
 
-        canonical_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(canonical_optimizer, self.patience)
-        prediction_scheduler = torch.optim.lr_scheduler.StepLR(prediction_optimizer, 100, gamma=0.4)
+        # # canonical_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(canonical_optimizer, self.patience)
+        # canonical_scheduler = torch.optim.lr_scheduler.StepLR(canonical_optimizer, 100, gamma=0.4)
+        # prediction_scheduler = torch.optim.lr_scheduler.StepLR(prediction_optimizer, 100, gamma=0.4)
 
-        return (
-            [canonical_optimizer, prediction_optimizer],
-            [
-                {"scheduler": canonical_scheduler, "monitor": "valid/loss"},
-                {"scheduler": prediction_scheduler, "monitor": "valid/loss"}
-            ]
-        )
+        # return (
+        #     [canonical_optimizer, prediction_optimizer],
+        #     [
+        #         {"scheduler": canonical_scheduler, "monitor": "valid/loss"},
+        #         {"scheduler": prediction_scheduler, "monitor": "valid/loss"}
+        #     ]
+        # )
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, self.patience, gamma=0.4)
+        return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": "valid/loss"}
 
     def validation_epoch_end(self, validation_step_outputs):
         scheduler = self.lr_schedulers()
-        self.log("lr", scheduler[0].optimizer.param_groups[0]["lr"])
+        self.log("lr", scheduler.optimizer.param_groups[0]["lr"])
 
         self.logger.experiment.log(
             {
