@@ -50,15 +50,17 @@ import torchvision
 import pytorch_lightning as pl
 import torchmetrics.functional as tmf
 import wandb
-import torchsort
+
+from canonical_network.models.optimal_transport import get_optimal_transport
+# import torchsort
 
 from canonical_network.models.colouring_layers import \
     SetDropout,ReluSets,Conv2dDeepSym,Conv2dSiamese,\
     SetMaxPool2d,SetUpsample,DeepSetsBlock,DeepSetsBlockSiamese,MLPBlock,Conv2dSAittala,Conv2dSridhar, Conv2d
 
 
-def double_conv(in_channels, out_channels,model_type,p_drop, kernel_size=3,use_max=0):
-    if model_type=='deepsets' or model_type == 'fullySiamese':
+def double_conv(in_channels, out_channels,model_type,p_drop, kernel_size=3,use_max=0,siamese_encoder=False):
+    if model_type=='deepsets' or model_type == 'fullySiamese' or siamese_encoder:
         return nn.Sequential(
             Conv2dSiamese(in_channels, out_channels, kernel_size,padding=int((kernel_size-1)/2)),
             ReluSets(),
@@ -166,12 +168,15 @@ class MLP(nn.Sequential):
 
 
 class CanonicalNetwork(pl.LightningModule):
-    def __init__(self):
+    def __init__(self, canon_type):
         super().__init__()
         self.pooling1 = torch.nn.AdaptiveAvgPool2d((32,32))
         self.cnn_block = double_conv(3, 32, "precanonical", 0.0, 5)
         self.pooling2 = torch.nn.AdaptiveAvgPool2d((1,1))
         self.deepsets_block = DeepSetsBlock(channels=(32, 32, 32))
+        self.canon_type = canon_type
+        if self.canon_type == "sinkhorn":
+            self.last_linear = nn.Linear(32, 6)
     
     def forward(self, x):
         b,n,c,h,w = x.size()
@@ -182,9 +187,13 @@ class CanonicalNetwork(pl.LightningModule):
         x = self.cnn_block(x)
         x = self.pooling2(x).squeeze()
         x = self.deepsets_block(x)
-        score = torch.sum(x, dim=2)
+
+        if self.canon_type == "sinkhorn":
+            x = self.last_linear(x)
+        elif self.canon_type == "sort":
+            x = torch.sum(x, dim=2)
         
-        return score
+        return x
 
 class UNet(pl.LightningModule):
     def __init__(self, hyperparams):
@@ -196,29 +205,36 @@ class UNet(pl.LightningModule):
         self.learning_rate = hyperparams.learning_rate if hasattr(hyperparams, "learning_rate") else None
         self.patience = hyperparams.patience
         self.parameters_factor = hyperparams.parameters_factor
+        self.canon_type = hyperparams.canon_type
+        self.siamese_encoder = self.model_type == "fullySiamese"
+        self.optimal_transport = get_optimal_transport(5, 1.0, "emd")
 
         if self.model_type =='deepsets' or self.model_type == 'Sridhar':
             c = (3, 64, 128, 200, 300)
         elif self.model_type == 'canonical':
             c = (18, 64, 128, 192, 320)
-            c = [c[0]] + [min(int(n/self.parameters_factor), 18) for n in c[1:]]
+            c = [c[0]] + [max(int(n/self.parameters_factor), 18) for n in c[1:]]
         elif self.model_type == 'Aittala':
             c = (3, 150, 200, 300, 320)
         elif self.model_type == 'DeepSymmetricNet':
             c = (3, 50, 100, 150, 200)
 
         if self.model_type == 'canonical':
-            self.canonical_network = CanonicalNetwork()
+            self.canonical_network = CanonicalNetwork(self.canon_type)
 
-        self.dconv_down1 = double_conv(c[0], c[1],self.model_type,self.p_drop,use_max=self.use_max)
-        self.dconv_down2 = double_conv(c[1], c[2],self.model_type,self.p_drop,use_max=self.use_max)
-        self.dconv_down3 = double_conv(c[2], c[3],self.model_type,self.p_drop,use_max=self.use_max)
-        self.dconv_down4 = double_conv(c[3], c[4],self.model_type,self.p_drop,use_max=self.use_max)
+        self.dconv_down1 = double_conv(c[0], c[1],self.model_type,self.p_drop,use_max=self.use_max, siamese_encoder=self.siamese_encoder)
+        self.dconv_down2 = double_conv(c[1], c[2],self.model_type,self.p_drop,use_max=self.use_max, siamese_encoder=self.siamese_encoder)
+        self.dconv_down3 = double_conv(c[2], c[3],self.model_type,self.p_drop,use_max=self.use_max, siamese_encoder=self.siamese_encoder)
+        self.dconv_down4 = double_conv(c[3], c[4],self.model_type,self.p_drop,use_max=self.use_max, siamese_encoder=self.siamese_encoder)
 
         self.maxpool2 = nn.MaxPool2d(kernel_size = 2,stride=2) if self.model_type == "canonical" else SetMaxPool2d(stride=2)
         self.maxpool8 = nn.MaxPool2d(kernel_size = 2,stride=8) if self.model_type == "canonical" else SetMaxPool2d(stride=8)
 
         self.feature_processing_block = get_feature_processing_block(model_type=self.model_type,channels=c)
+
+        if self.model_type == 'canonical':
+            c = (18, 64, 128, 192, 320)
+            c = [c[0]] + [max(int(n/self.parameters_factor), 18) for n in c[1:]]
 
         self.upsample2 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True) if self.model_type == "canonical" else SetUpsample(scale_factor=2)
         self.upsample8 = nn.Upsample(scale_factor=8, mode='bilinear', align_corners=True) if self.model_type == "canonical" else SetUpsample(scale_factor=8)
@@ -232,8 +248,13 @@ class UNet(pl.LightningModule):
 
     def forward(self, x):
         if self.model_type == 'canonical':
-            score = self.canonical_network(x)
-            x = self.sort(x, score)
+            canon_out = self.canonical_network(x)
+            if self.canon_type == 'sort':
+                x = self.sort(x, canon_out)
+            elif self.canon_type == 'sinkhorn':
+                permutation_matrix, sort_permutation_matrix = self.optimal_transport(canon_out, torch.ones(canon_out.size(0), 6).to(canon_out.device), torch.ones(canon_out.size(0), 6).to(canon_out.device))
+                inverse_permutation_matrix = permutation_matrix.transpose(1,2)
+                x = torch.einsum("bnm, bmchw -> bnchw", inverse_permutation_matrix, x)
             x = x.view(-1, 18, 64, 64)
             
         conv1 = self.dconv_down1(x)
@@ -276,7 +297,10 @@ class UNet(pl.LightningModule):
 
         if self.model_type == 'canonical':
             out = out.view(-1, 6, 3, 64, 64)
-            out = self.unsort(out, score)
+            if self.canon_type == 'sort':
+                out = self.unsort(out, canon_out)
+            elif self.canon_type == 'sinkhorn':
+                x = torch.einsum("bnm, bmchw -> bnchw", permutation_matrix, out)
 
         return out
     
@@ -316,8 +340,22 @@ class UNet(pl.LightningModule):
 
         return x
 
+    def sinkhorn(self, log_alpha, n_iter=20, temperature=1.0):
+        log_alpha = log_alpha / temperature
+        for _ in range(n_iter):
+            log_alpha = log_alpha - torch.logsumexp(log_alpha, -1, keepdim=True)
+            log_alpha = log_alpha - torch.logsumexp(log_alpha, -2, keepdim=True)
+        return log_alpha.exp()
 
-    def training_step(self, batch, batch_idx, optimizer_idx):
+    def gumbel_sinkhorn(self, log_alpha, tau=1.0, n_iter=20, noise=True):
+        if noise:
+            uniform_noise = torch.rand_like(log_alpha)
+            gumbel_noise = -torch.log(-torch.log(uniform_noise+1e-20)+1e-20)
+            log_alpha = (log_alpha + gumbel_noise)/tau
+        sampled_perm_mat = self.sinkhorn(log_alpha, n_iter, tau)
+        return sampled_perm_mat
+
+    def training_step(self, batch, batch_idx):
         inputs, targets = batch
 
         predictions = self(inputs)
@@ -343,34 +381,17 @@ class UNet(pl.LightningModule):
         self.log_dict(metrics, prog_bar=True)
         return predictions
 
-    def on_after_backward(self):
-        return super().on_after_backward()
-
     def configure_optimizers(self):
-        canonical_parameters = list(zip(*list(filter(lambda kv: "canonical_network" in kv[0], self.named_parameters()))))[1]
-        prediction_parameters = list(zip(*list(filter(lambda kv: "canonical_network" not in kv[0], self.named_parameters()))))[1]
-
-        canonical_optimizer = torch.optim.Adam(canonical_parameters, lr=self.learning_rate, weight_decay=1e-8)
-        prediction_optimizer = torch.optim.Adam(prediction_parameters, lr=self.learning_rate, weight_decay=1e-8)
-
-        canonical_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(canonical_optimizer, self.patience)
-        prediction_scheduler = torch.optim.lr_scheduler.StepLR(prediction_optimizer, 100, gamma=0.4)
-
-        return (
-            [canonical_optimizer, prediction_optimizer],
-            [
-                {"scheduler": canonical_scheduler, "monitor": "valid/loss"},
-                {"scheduler": prediction_scheduler, "monitor": "valid/loss"}
-            ]
-        )
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate, weight_decay=0.0)
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 10, gamma=0.4)
+        return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": "valid/loss"}
 
     def validation_epoch_end(self, validation_step_outputs):
         scheduler = self.lr_schedulers()
-        self.log("lr", scheduler[0].optimizer.param_groups[0]["lr"])
+        self.log("lr", scheduler.optimizer.param_groups[0]["lr"])
 
         self.logger.experiment.log(
             {
                 "global_step": self.global_step,
             }
         )
-
