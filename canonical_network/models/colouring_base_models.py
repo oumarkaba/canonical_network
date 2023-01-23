@@ -235,10 +235,6 @@ class UNet(pl.LightningModule):
 
         self.feature_processing_block = get_feature_processing_block(model_type=self.model_type,channels=c)
 
-        if self.model_type == 'canonical':
-            c = (18, 64, 128, 192, 320)
-            c = [c[0]] + [max(int(n/self.parameters_factor), 18) for n in c[1:]]
-
         self.upsample2 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True) if self.model_type == "canonical" else SetUpsample(scale_factor=2)
         self.upsample8 = nn.Upsample(scale_factor=8, mode='bilinear', align_corners=True) if self.model_type == "canonical" else SetUpsample(scale_factor=8)
 
