@@ -14,11 +14,12 @@ NBODY_HYPERPARAMS = {
     "learning_rate": 1e-3,
     "weight_decay": 1e-12,
     "patience": 1000,
-    "hidden_nf": 64,
+    "hidden_dim": 32,
     "input_dim": 6,
     "in_node_nf": 1,
     "in_edge_nf": 2,
     "num_layers": 4,
+    "out_dim": 1,
     "canon_num_layers": 4,
     "canon_hidden_dim": 16,
     "canon_layer_pooling": "mean",
@@ -29,6 +30,11 @@ NBODY_HYPERPARAMS = {
     "canon_angular_feature": 0,
     "canon_dropout": 0.5,
     "freeze_canon": False,
+    "layer_pooling": "sum",
+    "final_pooling": "mean",
+    "nonlinearity": "relu",
+    "angular_feature": "pv",
+    "dropout": 0,
 }
 
 
@@ -102,14 +108,14 @@ class EuclideangraphPredFunction(pl.LightningModule):
         super().__init__()
         self.model_type = hyperparams.pred_model_type
         self.num_layers = hyperparams.num_layers
-        self.hidden_nf = hyperparams.hidden_nf
+        self.hidden_dim = hyperparams.hidden_dim
         self.input_dim = hyperparams.input_dim
         self.in_node_nf = hyperparams.in_node_nf
         self.in_edge_nf = hyperparams.in_edge_nf
 
         model_hyperparams = {
             "num_layers": self.num_layers,
-            "hidden_nf": self.hidden_nf,
+            "hidden_dim": self.hidden_dim,
             "input_dim": self.input_dim,
             "in_node_nf": self.in_node_nf,
             "in_edge_nf": self.in_edge_nf,
@@ -118,6 +124,7 @@ class EuclideangraphPredFunction(pl.LightningModule):
         self.model = {
             "GNN": lambda: GNN(define_hyperparams(model_hyperparams)),
             "EGNN": lambda: EGNN_vel(define_hyperparams(model_hyperparams)),
+            "vndeepsets": lambda: VNDeepSets(define_hyperparams(model_hyperparams)),
         }[self.model_type]()
 
     def forward(self, nodes, loc, edges, vel, edge_attr, charges):

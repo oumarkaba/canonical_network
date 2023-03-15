@@ -117,11 +117,12 @@ class BaseEuclideangraphModel(pl.LightningModule):
             edges = [torch.cat(rows), torch.cat(cols)]
         return edges
 
+
 class EGNN_vel(BaseEuclideangraphModel):
     def __init__(self, hyperparams):
         super(EGNN_vel, self).__init__(hyperparams)
         self.model = "EGNN"
-        self.hidden_nf = hyperparams.hidden_nf
+        self.hidden_dim = hyperparams.hidden_dim
         self.in_node_nf = hyperparams.in_node_nf
         self.n_layers = 4
         self.act_fn = nn.SiLU()
@@ -131,14 +132,58 @@ class EGNN_vel(BaseEuclideangraphModel):
         self.tanh = False
         self.num_vectors = 1
 
-        #self.reg = reg
+        # self.reg = reg
         ### Encoder
-        #self.add_module("gcl_0", E_GCL(in_node_nf, self.hidden_nf, self.hidden_nf, edges_in_d=in_edge_nf, act_fn=act_fn, recurrent=False, coords_weight=coords_weight))
-        self.embedding = nn.Linear(hyperparams.in_node_nf, self.hidden_nf)
-        self.add_module("gcl_%d" % 0, E_GCL_vel(self.hidden_nf, self.hidden_nf, self.hidden_nf, edges_in_d=hyperparams.in_edge_nf, act_fn=self.act_fn, coords_weight=self.coords_weight, recurrent=self.recurrent, norm_diff=self.norm_diff, tanh=self.tanh, num_vectors_out=self.num_vectors))
+        # self.add_module("gcl_0", E_GCL(in_node_nf, self.hidden_dim, self.hidden_dim, edges_in_d=in_edge_nf, act_fn=act_fn, recurrent=False, coords_weight=coords_weight))
+        self.embedding = nn.Linear(hyperparams.in_node_nf, self.hidden_dim)
+        self.add_module(
+            "gcl_%d" % 0,
+            E_GCL_vel(
+                self.hidden_dim,
+                self.hidden_dim,
+                self.hidden_dim,
+                edges_in_d=hyperparams.in_edge_nf,
+                act_fn=self.act_fn,
+                coords_weight=self.coords_weight,
+                recurrent=self.recurrent,
+                norm_diff=self.norm_diff,
+                tanh=self.tanh,
+                num_vectors_out=self.num_vectors,
+            ),
+        )
         for i in range(1, self.n_layers - 1):
-            self.add_module("gcl_%d" % i, E_GCL_vel(self.hidden_nf, self.hidden_nf, self.hidden_nf, edges_in_d=hyperparams.in_edge_nf, act_fn=self.act_fn, coords_weight=self.coords_weight, recurrent=self.recurrent, norm_diff=self.norm_diff, tanh=self.tanh, num_vectors_in=self.num_vectors, num_vectors_out=self.num_vectors))
-        self.add_module("gcl_%d" % (self.n_layers - 1), E_GCL_vel(self.hidden_nf, self.hidden_nf, self.hidden_nf, edges_in_d=hyperparams.in_edge_nf, act_fn=self.act_fn, coords_weight=self.coords_weight, recurrent=self.recurrent, norm_diff=self.norm_diff, tanh=self.tanh, num_vectors_in=self.num_vectors, last_layer=True))
+            self.add_module(
+                "gcl_%d" % i,
+                E_GCL_vel(
+                    self.hidden_dim,
+                    self.hidden_dim,
+                    self.hidden_dim,
+                    edges_in_d=hyperparams.in_edge_nf,
+                    act_fn=self.act_fn,
+                    coords_weight=self.coords_weight,
+                    recurrent=self.recurrent,
+                    norm_diff=self.norm_diff,
+                    tanh=self.tanh,
+                    num_vectors_in=self.num_vectors,
+                    num_vectors_out=self.num_vectors,
+                ),
+            )
+        self.add_module(
+            "gcl_%d" % (self.n_layers - 1),
+            E_GCL_vel(
+                self.hidden_dim,
+                self.hidden_dim,
+                self.hidden_dim,
+                edges_in_d=hyperparams.in_edge_nf,
+                act_fn=self.act_fn,
+                coords_weight=self.coords_weight,
+                recurrent=self.recurrent,
+                norm_diff=self.norm_diff,
+                tanh=self.tanh,
+                num_vectors_in=self.num_vectors,
+                last_layer=True,
+            ),
+        )
 
     def forward(self, h, x, edges, vel, edge_attr, _):
         h = self.embedding(h)
@@ -151,36 +196,47 @@ class GNN(BaseEuclideangraphModel):
     def __init__(self, hyperparams):
         super(GNN, self).__init__(hyperparams)
         self.model = "GNN"
-        self.hidden_nf = hyperparams.hidden_nf
+        self.hidden_dim = hyperparams.hidden_dim
         self.input_dim = hyperparams.input_dim
         self.n_layers = hyperparams.num_layers
         self.act_fn = nn.SiLU()
         self.attention = 0
         self.recurrent = True
         ### Encoder
-        #self.add_module("gcl_0", GCL(self.hidden_nf, self.hidden_nf, self.hidden_nf, edges_in_nf=1, act_fn=act_fn, attention=attention, recurrent=recurrent))
+        # self.add_module("gcl_0", GCL(self.hidden_dim, self.hidden_dim, self.hidden_dim, edges_in_nf=1, act_fn=act_fn, attention=attention, recurrent=recurrent))
         for i in range(0, self.n_layers):
-            self.add_module("gcl_%d" % i, GCL(self.hidden_nf, self.hidden_nf, self.hidden_nf, edges_in_nf=2, act_fn=self.act_fn, attention=self.attention, recurrent=self.recurrent))
+            self.add_module(
+                "gcl_%d" % i,
+                GCL(
+                    self.hidden_dim,
+                    self.hidden_dim,
+                    self.hidden_dim,
+                    edges_in_nf=2,
+                    act_fn=self.act_fn,
+                    attention=self.attention,
+                    recurrent=self.recurrent,
+                ),
+            )
 
-        self.decoder = nn.Sequential(nn.Linear(self.hidden_nf, self.hidden_nf),
-                              self.act_fn,
-                              nn.Linear(self.hidden_nf, 3))
-        self.embedding = nn.Sequential(nn.Linear(self.input_dim, self.hidden_nf))
-
+        self.decoder = nn.Sequential(
+            nn.Linear(self.hidden_dim, self.hidden_dim), self.act_fn, nn.Linear(self.hidden_dim, 3)
+        )
+        self.embedding = nn.Sequential(nn.Linear(self.input_dim, self.hidden_dim))
 
     def forward(self, nodes, loc, edges, vel, edge_attr, _):
         nodes = torch.cat([loc, vel], dim=1)
         h = self.embedding(nodes)
-        #h, _ = self._modules["gcl_0"](h, edges, edge_attr=edge_attr)
+        # h, _ = self._modules["gcl_0"](h, edges, edge_attr=edge_attr)
         for i in range(0, self.n_layers):
             h, _ = self._modules["gcl_%d" % i](h, edges, edge_attr=edge_attr)
-        #return h
+        # return h
         return self.decoder(h)
 
 
 class VNDeepSets(BaseEuclideangraphModel):
     def __init__(self, hyperparams):
         super().__init__(hyperparams)
+        self.prediction_mode = hyperparams.out_dim == 1
         self.model = "vndeepsets"
         self.hidden_dim = hyperparams.hidden_dim
         self.layer_pooling = hyperparams.layer_pooling
@@ -193,20 +249,27 @@ class VNDeepSets(BaseEuclideangraphModel):
         self.dropout = hyperparams.dropout
         self.out_dim = hyperparams.out_dim
         self.in_dim = len(self.canon_feature)
-        self.first_set_layer = VNDeepSetLayer(self.in_dim, self.hidden_dim, self.nonlinearity, self.layer_pooling, False)
-        self.in_dim = len(self.canon_feature)
-        self.first_set_layer = VNDeepSetLayer(self.in_dim, self.hidden_dim, self.nonlinearity, self.layer_pooling, False, dropout=self.dropout)
-        self.set_layers = SequentialMultiple(
-            *[VNDeepSetLayer(self.hidden_dim, self.hidden_dim, self.nonlinearity, self.layer_pooling, dropout=self.dropout) for i in range(self.num_layers - 1)]
+        self.first_set_layer = VNDeepSetLayer(
+            self.in_dim, self.hidden_dim, self.nonlinearity, self.layer_pooling, False, dropout=self.dropout
         )
-        self.output_layer = nn.Linear(self.hidden_dim, self.out_dim) if not self.out_dim == 1 else SequentialMultiple(nn.Linear(self.hidden_dim, self.out_dim), nn.Sigmoid())
+        self.set_layers = SequentialMultiple(
+            *[
+                VNDeepSetLayer(
+                    self.hidden_dim, self.hidden_dim, self.nonlinearity, self.layer_pooling, dropout=self.dropout
+                )
+                for i in range(self.num_layers - 1)
+            ]
+        )
+        self.output_layer = (
+            nn.Linear(self.hidden_dim, self.out_dim)
+        )
         self.batch_size = hyperparams.batch_size
 
         self.dummy_input = torch.zeros(1, device=self.device, dtype=torch.long)
         self.dummy_indices = torch.zeros(1, device=self.device, dtype=torch.long)
 
     def forward(self, nodes, loc, edges, vel, edge_attr, charges):
-        batch_indices = torch.arange(self.batch_size, device=self.device).reshape(-1,1)
+        batch_indices = torch.arange(self.batch_size, device=self.device).reshape(-1, 1)
         batch_indices = batch_indices.repeat(1, 5).reshape(-1)
         mean_loc = ts.scatter(loc, batch_indices, 0, reduce=self.layer_pooling)
         mean_loc = mean_loc.repeat(5, 1, 1).transpose(0, 1).reshape(-1, 3)
@@ -227,7 +290,11 @@ class VNDeepSets(BaseEuclideangraphModel):
         x, _ = self.first_set_layer(features, edges)
         x, _ = self.set_layers(x, edges)
 
-        if self.final_pooling:
+        if self.prediction_mode:
+            output = self.output_layer(x)
+            output = output.squeeze()
+            return output
+        else:
             x = ts.scatter(x, batch_indices, 0, reduce=self.final_pooling)
         output = self.output_layer(x)
 
@@ -236,7 +303,7 @@ class VNDeepSets(BaseEuclideangraphModel):
 
         rotation_vectors = output[:, :, :3]
         translation_vectors = output[:, :, 3:] if self.canon_translation else 0.0
-        translation_vectors =  translation_vectors + mean_loc[:, :, None]
+        translation_vectors = translation_vectors + mean_loc[:, :, None]
 
         return rotation_vectors, translation_vectors.squeeze()
 
@@ -273,7 +340,7 @@ class VNDeepSetLayer(nn.Module):
         pooled_set = ts.scatter(nodes_1, edges_2, 0, reduce=self.pooling)
         pooling = self.pooling_linear(pooled_set)
 
-        output = self.nonlinear_function((identity + pooling).transpose(1,-1)).transpose(1,-1)
+        output = self.nonlinear_function((identity + pooling).transpose(1, -1)).transpose(1, -1)
 
         output = self.dropout_layer(output)
 
@@ -281,4 +348,3 @@ class VNDeepSetLayer(nn.Module):
             output = output + x
 
         return output, edges
-
