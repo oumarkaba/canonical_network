@@ -41,7 +41,7 @@ def get_hyperparams():
     parser.add_argument("--checkpoint_path", type=str, default="canonical_network/results", help="path to checkpoint")
     parser.add_argument("--deterministic", type=bool, default=False, help="deterministic training")
     parser.add_argument("--wandb_project", type=str, default="canonical_network", help="wandb project name")
-    parser.add_argument("--wandb_entity", type=str, default="cyanogenoid", help="wandb entity name")
+    parser.add_argument("--wandb_entity", type=str, default="", help="wandb entity name")
     parser.add_argument("--save_canonized_images", type=int, default=0, help="save canonized images")
     parser.add_argument("--check_invariance", type=int, default=0, help="check if the network is invariant")
     parser.add_argument("--num_channels", type=int, default=20, help="num_channels for equivariant cnn base encoder")

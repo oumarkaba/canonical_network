@@ -21,7 +21,7 @@ def train_nbody():
         os.environ["WANDB_MODE"] = "online"
         
     wandb.login()
-    wandb.init(config=hyperparams, entity="symmetry_group", project="canonical_network-nbody")
+    wandb.init(config=hyperparams, entity="", project="canonical_network-nbody")
     wandb_logger = WandbLogger(project="canonical_network-nbody")
 
     hyperparams = wandb.config

@@ -45,7 +45,7 @@ def get_hyperparams():
     parser.add_argument("--deterministic", type=bool, default=False, help="deterministic training")
     parser.add_argument("--use_wandb", type=int, default=0, help="use wandb")
     parser.add_argument("--wandb_project", type=str, default="canonical_network", help="wandb project name")
-    parser.add_argument("--wandb_entity", type=str, default="symmetry_group", help="wandb entity name")
+    parser.add_argument("--wandb_entity", type=str, default="", help="wandb entity name")
 
     # Shapenet specific hyperparameters
     parser.add_argument("--regularization_transform", type=int, default=0, help="regularization transform")
