@@ -7,9 +7,11 @@ import torchmetrics.functional as tmf
 import wandb
 
 from canonical_network.models.vn_layers import *
-from canonical_network.models.euclideangraph_base_models import EGNN_vel, GNN, VNDeepSets, BaseEuclideangraphModel
+from canonical_network.models.euclideangraph_base_models import EGNN_vel, GNN, VNDeepSets, BaseEuclideangraphModel, Transformer
 from canonical_network.utils import define_hyperparams, dict_to_object
 
+# NOTE: Might need to change nhead...
+# Input dim is 6 because location and velocity vectors are concatenated.
 NBODY_HYPERPARAMS = {
     "learning_rate": 1e-3,
     "weight_decay": 1e-12,
@@ -125,6 +127,7 @@ class EuclideangraphPredFunction(pl.LightningModule):
             "GNN": lambda: GNN(define_hyperparams(model_hyperparams)),
             "EGNN": lambda: EGNN_vel(define_hyperparams(model_hyperparams)),
             "vndeepsets": lambda: VNDeepSets(define_hyperparams(model_hyperparams)),
+            "Transformer": lambda: Transformer(define_hyperparams(model_hyperparams))
         }[self.model_type]()
 
     def forward(self, nodes, loc, edges, vel, edge_attr, charges):

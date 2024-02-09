@@ -8,7 +8,7 @@ from pytorch3d.transforms import RotateAxisAngle, Rotate, random_rotations
 import torchmetrics.functional as tmf
 import wandb
 import torch_scatter as ts
-
+import math
 from canonical_network.models.gcl import E_GCL_vel, GCL
 from canonical_network.models.vn_layers import VNLinearLeakyReLU, VNLinear, VNLeakyReLU, VNSoftplus
 from canonical_network.models.set_base_models import SequentialMultiple
@@ -38,17 +38,18 @@ class BaseEuclideangraphModel(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         batch_size, n_nodes, _ = batch[0].size()
-        batch = [d.view(-1, d.size(2)) for d in batch]
+        batch = [d.view(-1, d.size(2)) for d in batch] # convert into 2 dimensional matrices
         loc, vel, edge_attr, charges, loc_end = batch
         edges = self.get_edges(batch_size, n_nodes)
 
-        nodes = torch.sqrt(torch.sum(vel ** 2, dim=1)).unsqueeze(1).detach()
+        nodes = torch.sqrt(torch.sum(vel ** 2, dim=1)).unsqueeze(1).detach() # norm of velocity vectors
         rows, cols = edges
         loc_dist = torch.sum((loc[rows] - loc[cols]) ** 2, 1).unsqueeze(1)  # relative distances among locations
         edge_attr = torch.cat([edge_attr, loc_dist], 1).detach()  # concatenate all edge properties
 
-        outputs = self(nodes, loc.detach(), edges, vel, edge_attr, charges)
+        outputs = self(nodes, loc.detach(), edges, vel, edge_attr, charges) # self takes a step.
 
+        # outputs and loc_end are both (5*batch_size)x3
         loss = self.loss(outputs, loc_end)
 
         metrics = {"train/loss": loss}
@@ -184,7 +185,9 @@ class EGNN_vel(BaseEuclideangraphModel):
                 last_layer=True,
             ),
         )
-
+    '''
+    
+    '''
     def forward(self, h, x, edges, vel, edge_attr, _):
         h = self.embedding(h)
         for i in range(0, self.n_layers):
@@ -229,6 +232,7 @@ class GNN(BaseEuclideangraphModel):
         # h, _ = self._modules["gcl_0"](h, edges, edge_attr=edge_attr)
         for i in range(0, self.n_layers):
             h, _ = self._modules["gcl_%d" % i](h, edges, edge_attr=edge_attr)
+        # h is 500x32 and then passed to decoder to become 500x3
         # return h
         return self.decoder(h)
 
@@ -274,6 +278,9 @@ class VNDeepSets(BaseEuclideangraphModel):
         mean_loc = ts.scatter(loc, batch_indices, 0, reduce=self.layer_pooling)
         mean_loc = mean_loc.repeat(5, 1, 1).transpose(0, 1).reshape(-1, 3)
         canonical_loc = loc - mean_loc
+        # p = position
+        # v = velocity
+        # a = angular velocity (cross product of position and velocity)
         if self.canon_feature == "p":
             features = torch.stack([canonical_loc], dim=2)
         if self.canon_feature == "pv":
@@ -331,6 +338,9 @@ class VNDeepSetLayer(nn.Module):
             self.nonlinear_function = VNLeakyReLU(out_channels, share_nonlinearity=False)
 
     def forward(self, x, edges):
+        # here x is the features, which depends on canon_feature
+        # check VNDeepSets.forward
+        #
         edges_1 = edges[0]
         edges_2 = edges[1]
 
@@ -348,3 +358,64 @@ class VNDeepSetLayer(nn.Module):
             output = output + x
 
         return output, edges
+
+class Transformer(BaseEuclideangraphModel):
+    def __init__(self, hyperparams):
+        super(Transformer, self).__init__(hyperparams)
+        self.model = "Transformer"
+        self.hidden_dim = hyperparams.hidden_dim #32
+        self.input_dim = hyperparams.input_dim #6
+        self.n_layers = hyperparams.num_layers #4
+        self.act_fn = nn.ReLU() #NOTE: I randomly chose this... check later
+        self.dropout = hyperparams.dropout
+        self.nhead = 8
+
+        ### Positional encoder
+        self.pos_encoder = PositionalEncoding(hidden_dim=self.hidden_dim, dropout=self.dropout)
+
+        ### Charge embedding
+        self.charge_embedding = nn.Embedding(2,self.hidden_dim)
+
+        ### Encoder - d_model is same for output and input
+        encoder_layer = nn.TransformerEncoderLayer(d_model=self.hidden_dim, nhead=self.nhead)
+        self.encoder = torch.nn.TransformerEncoder(encoder_layer=encoder_layer, num_layers=self.n_layers)
+
+        ### Decoder
+        self.decoder = nn.Sequential(
+            nn.Linear(in_features=self.hidden_dim, out_features=self.hidden_dim), 
+            self.act_fn, 
+            nn.Linear(in_features=self.hidden_dim, out_features=3)
+        )
+
+    def forward(self, nodes, loc, edges, vel, edge_attr, charges):
+        # Positional encodings
+        pos_encodings = torch.cat([loc,vel], dim = 1).unsqueeze(2) # batch x 6 x 1
+        pos_encodings = self.pos_encoder(pos_encodings) # batch x 6 x hidden_dim
+        # Charge embeddings
+        charges[charges == -1] = 0 # to work with nn.Embedding
+        charges = charges.long()
+        charges = self.charge_embedding(charges)  # batch x 1 x hidden_dim
+        nodes = torch.cat([pos_encodings, charges], dim = 1).permute(1,0,2) # batch x 7 x hidden_dim -> this is because encoder expects these dimensions
+        h = self.encoder(nodes)
+        h = self.decoder(h) 
+        return h
+
+
+class PositionalEncoding(nn.Module):
+    def __init__(self, hidden_dim, dropout):
+        super().__init__()
+        self.dropout = nn.Dropout(p=dropout)
+        self.hidden_dim = hidden_dim
+        # Positional encoding from "Attention is All You Need" 
+        # Code: (https://pytorch.org/tutorials/beginner/transformer_tutorial.html)
+        # Math: (https://kazemnejad.com/blog/transformer_architecture_positional_encoding/)
+        self.div_term = torch.exp(torch.arange(0, hidden_dim, 2) * (-math.log(10000.0) / hidden_dim)).view(1,1,16)
+
+    def forward(self, x):
+        """
+        Input - x: (batch_size x 6) (6 since velocity and location vectors are concatenated)
+        """
+        pe = torch.zeros(x.shape[0],x.shape[1], self.hidden_dim) # batch x 6 x 32
+        pe[:, :,0::2] = torch.sin(x * self.div_term) # 500 x 6 x 1 * 1 x 1 x 16
+        pe[:, :,1::2] = torch.cos(x * self.div_term) # 500 x 6 x 1 * 1 x 1 x 16
+        return self.dropout(pe)
