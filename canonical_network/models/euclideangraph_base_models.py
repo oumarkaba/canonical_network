@@ -12,6 +12,7 @@ import torch_scatter as ts
 from canonical_network.models.gcl import E_GCL_vel, GCL
 from canonical_network.models.vn_layers import VNLinearLeakyReLU, VNLinear, VNLeakyReLU, VNSoftplus
 from canonical_network.models.set_base_models import SequentialMultiple
+from canonical_network.models.gvp import GVP, GVPConvLayer, LayerNorm, tuple_index
 
 
 class BaseEuclideangraphModel(pl.LightningModule):
@@ -227,7 +228,7 @@ class GNN(BaseEuclideangraphModel):
         nodes = torch.cat([loc, vel], dim=1)
         h = self.embedding(nodes)
         # h, _ = self._modules["gcl_0"](h, edges, edge_attr=edge_attr)
-        for i in range(0, self.n_layers):
+        for i in range(0, self.n_layers): 
             h, _ = self._modules["gcl_%d" % i](h, edges, edge_attr=edge_attr)
         # return h
         return self.decoder(h)
@@ -348,3 +349,83 @@ class VNDeepSetLayer(nn.Module):
             output = output + x
 
         return output, edges
+
+class GVP_GNN(BaseEuclideangraphModel):
+    '''
+    GVP-GNN for structure-conditioned autoregressive 
+    protein design as described in manuscript.
+    '''
+    def __init__(self, hyperparams):
+        self.node_in_dim = (1, 2)
+        self.hidden_dim = hyperparams.hidden_dim
+        self.node_h_dim = (hyperparams.hidden_dim, hyperparams.hidden_dim)
+        self.edge_in_dim = (2, 0)
+        self.edge_h_dim = (hyperparams.hidden_dim, hyperparams.hidden_dim)
+        self.out_dim = hyperparams.out_dim
+        self.num_layers = hyperparams.num_layers
+        self.drop_rate = hyperparams.dropout
+        self.final_pooling = hyperparams.final_pooling
+        self.canon_translation = hyperparams.canon_translation
+        self.batch_size = hyperparams.batch_size
+        self.layer_pooling = hyperparams.layer_pooling
+    
+        super(GVP_GNN, self).__init__(hyperparams)
+        
+        self.W_v = nn.Sequential(
+            GVP(self.node_in_dim, self.node_h_dim, activations=(None, None)),
+            LayerNorm(self.node_h_dim)
+        )
+        self.W_e = nn.Sequential(
+            GVP(self.edge_in_dim, self.edge_h_dim, activations=(None, None)),
+            LayerNorm(self.edge_h_dim)
+        )
+        
+        self.encoder_layers = nn.ModuleList(
+                GVPConvLayer(self.node_h_dim, self.edge_h_dim, drop_rate=self.drop_rate) 
+            for _ in range(self.num_layers))
+      
+        self.last_layer = GVPConvLayer(self.node_h_dim, self.edge_h_dim, drop_rate=self.drop_rate)
+        self.output_layer = (
+            nn.Linear(self.hidden_dim, self.out_dim)
+        )
+
+    def forward(self, nodes, loc, edges, vel, edge_attr, charges):
+        '''
+        Forward pass to be used at train-time, or evaluating likelihood.
+        
+        :param h_V: tuple (s, V) of node embeddings
+        :param edge_index: `torch.Tensor` of shape [2, num_edges]
+        :param h_E: tuple (s, V) of edge embeddings
+        :param seq: int `torch.Tensor` of shape [num_nodes]
+        '''
+        batch_indices = torch.arange(self.batch_size, device=self.device).reshape(-1, 1)
+        batch_indices = batch_indices.repeat(1, 5).reshape(-1)
+        mean_loc = ts.scatter(loc, batch_indices, 0, reduce=self.layer_pooling)
+        mean_loc = mean_loc.repeat(5, 1, 1).transpose(0, 1).reshape(-1, 3)
+        canonical_loc = loc - mean_loc
+
+        h_V = (nodes, torch.stack([canonical_loc, vel], dim=1))
+        h_E = edge_attr
+        edges = torch.stack(edges, dim=0)
+        h_V = self.W_v(h_V)
+        h_E = self.W_e(h_E)
+        
+        for layer in self.encoder_layers:
+            h_V = layer(h_V, edges, h_E)
+        
+        h_V = self.last_layer(h_V, edges, h_E)[1]
+        
+        x = ts.scatter(h_V, batch_indices, 0, reduce=self.final_pooling)
+        x = x.transpose(1, 2)
+        
+        output = self.output_layer(x)
+
+        output = output.repeat(5, 1, 1, 1).transpose(0, 1)
+        output = output.reshape(-1, 3, 4)
+
+        rotation_vectors = output[:, :, :3]
+        translation_vectors = output[:, :, 3:] if self.canon_translation else 0.0
+        translation_vectors = translation_vectors + mean_loc[:, :, None]
+
+        return rotation_vectors, translation_vectors.squeeze()
+

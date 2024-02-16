@@ -7,7 +7,7 @@ import torchmetrics.functional as tmf
 import wandb
 
 from canonical_network.models.vn_layers import *
-from canonical_network.models.euclideangraph_base_models import EGNN_vel, GNN, VNDeepSets, BaseEuclideangraphModel
+from canonical_network.models.euclideangraph_base_models import EGNN_vel, GNN, GVP_GNN, VNDeepSets, BaseEuclideangraphModel
 from canonical_network.utils import define_hyperparams, dict_to_object
 
 NBODY_HYPERPARAMS = {
@@ -20,8 +20,8 @@ NBODY_HYPERPARAMS = {
     "in_edge_nf": 2,
     "num_layers": 4,
     "out_dim": 1,
-    "canon_num_layers": 4,
-    "canon_hidden_dim": 16,
+    "canon_num_layers": 3,
+    "canon_hidden_dim": 8,
     "canon_layer_pooling": "mean",
     "canon_final_pooling": "mean",
     "canon_nonlinearity": "relu",
@@ -34,7 +34,7 @@ NBODY_HYPERPARAMS = {
     "final_pooling": "mean",
     "nonlinearity": "relu",
     "angular_feature": "pv",
-    "dropout": 0,
+    "dropout": 0.5,
 }
 
 
@@ -70,6 +70,7 @@ class EuclideangraphCanonFunction(pl.LightningModule):
         self.model = {
             "EGNN": lambda: EGNN_vel(define_hyperparams(model_hyperparams)),
             "vndeepsets": lambda: VNDeepSets(define_hyperparams(model_hyperparams)),
+            "GVP": lambda: GVP_GNN(define_hyperparams(model_hyperparams)),
         }[self.model_type]()
 
     def forward(self, nodes, loc, edges, vel, edge_attr, charges):
