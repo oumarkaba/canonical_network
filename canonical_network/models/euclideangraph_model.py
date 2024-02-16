@@ -157,7 +157,7 @@ class EuclideanGraphModel(BaseEuclideangraphModel):
         )
         canonical_vel = torch.bmm(vel[:, None, :], rotation_matrix_inverse).squeeze()
 
-        position_prediction = self.pred_function(nodes, canonical_loc, edges, canonical_vel, edge_attr, charges)
+        position_prediction = self.pred_function(nodes, canonical_loc, edges, canonical_vel, edge_attr, charges) # 7 x 500 x 3
 
         position_prediction = (
             torch.bmm(position_prediction[:, None, :], rotation_matrix).squeeze() + translation_vectors

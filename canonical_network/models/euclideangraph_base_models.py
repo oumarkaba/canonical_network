@@ -14,12 +14,15 @@ from canonical_network.models.vn_layers import VNLinearLeakyReLU, VNLinear, VNLe
 from canonical_network.models.set_base_models import SequentialMultiple
 
 
+# This model is the parent of all the following models in this file.
 class BaseEuclideangraphModel(pl.LightningModule):
     def __init__(self, hyperparams):
         super().__init__()
         self.learning_rate = hyperparams.learning_rate if hasattr(hyperparams, "learning_rate") else None
         self.weight_decay = hyperparams.weight_decay if hasattr(hyperparams, "weight_decay") else 0.0
         self.patience = hyperparams.patience if hasattr(hyperparams, "patience") else 100
+        # Each input has 5 particles. This list defines all the edges, since our graph is fully connected.
+        # vertex at self.edges[0][i] has an edge connecting to self.edges[1][i]
         self.edges = [
             [0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4],
             [1, 2, 3, 4, 0, 2, 3, 4, 0, 1, 3, 4, 0, 1, 2, 4, 0, 1, 2, 3],
@@ -37,10 +40,23 @@ class BaseEuclideangraphModel(pl.LightningModule):
         self.dummy_edge_attr = torch.zeros(40, 2, device=self.device, dtype=torch.float)
 
     def training_step(self, batch, batch_idx):
+        """
+        Performs one training step.
+
+        Keyword arguments:
+        batch -- a list of tensors: [loc, vel, edge_attr, charges, loc_end]
+            loc: batch_size x n_nodes x 3 
+            vel: batch_size x n_nodes x 3
+            edge_attr: batch_size x n_edges x 1
+            charges: batch_size x n_nodes x 1
+            loc_end: batch_size x n_nodes x 3
+        batch_idx -- index of the batch
+        """
+     
         batch_size, n_nodes, _ = batch[0].size()
-        batch = [d.view(-1, d.size(2)) for d in batch] # convert into 2 dimensional matrices
+        batch = [d.view(-1, d.size(2)) for d in batch] # converts to 2D matrices
         loc, vel, edge_attr, charges, loc_end = batch
-        edges = self.get_edges(batch_size, n_nodes)
+        edges = self.get_edges(batch_size, n_nodes) # returns a list of two tensors, each of size num_edges * batch_size (where num_edges is always 20, since G = K5)
 
         nodes = torch.sqrt(torch.sum(vel ** 2, dim=1)).unsqueeze(1).detach() # norm of velocity vectors
         rows, cols = edges
@@ -58,6 +74,18 @@ class BaseEuclideangraphModel(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
+        """
+        Performs one validation step.
+
+        Keyword arguments:
+        batch -- a list of tensors: [loc, vel, edge_attr, charges, loc_end]
+            loc: batch_size x n_nodes x 3 
+            vel: batch_size x n_nodes x 3
+            edge_attr: batch_size x n_edges x 1
+            charges: batch_size x n_nodes x 1
+            loc_end: batch_size x n_nodes x 3
+        batch_idx -- index of the batch
+        """
         batch_size, n_nodes, _ = batch[0].size()
         batch = [d.view(-1, d.size(2)) for d in batch]
         loc, vel, edge_attr, charges, loc_end = batch
@@ -107,11 +135,19 @@ class BaseEuclideangraphModel(pl.LightningModule):
         #     wandb.save(model_filename)
 
     def get_edges(self, batch_size, n_nodes):
+        """
+        Returns a length 2 list of vertices, where edges[0][i] is adjacent to edges[1][i]
+
+        Keyword arguments:
+            batch_size: int, defined in train_nbody.HYPERPARAMS
+            n_nodes: always 5, since each sample has 5 nodes
+        """
         edges = [torch.LongTensor(self.edges[0]).to(self.device), torch.LongTensor(self.edges[1]).to(self.device)]
         if batch_size == 1:
             return edges
         elif batch_size > 1:
             rows, cols = [], []
+            # Adds 5i to the vertices in each sample, allowing us to use rows and cols for indexing our data.
             for i in range(batch_size):
                 rows.append(edges[0] + n_nodes * i)
                 cols.append(edges[1] + n_nodes * i)
@@ -366,37 +402,47 @@ class Transformer(BaseEuclideangraphModel):
         self.hidden_dim = hyperparams.hidden_dim #32
         self.input_dim = hyperparams.input_dim #6
         self.n_layers = hyperparams.num_layers #4
+        self.ff_hidden = self.hidden_dim * 8
         self.act_fn = nn.ReLU() #NOTE: I randomly chose this... check later
-        self.dropout = hyperparams.dropout
+        self.dropout = 0
         self.nhead = 8
 
-        ### Positional encoder
         self.pos_encoder = PositionalEncoding(hidden_dim=self.hidden_dim, dropout=self.dropout)
 
-        ### Charge embedding
         self.charge_embedding = nn.Embedding(2,self.hidden_dim)
 
-        ### Encoder - d_model is same for output and input
-        encoder_layer = nn.TransformerEncoderLayer(d_model=self.hidden_dim, nhead=self.nhead)
+        # Input: 5*batch_size x seq_len x hidden_dim
+        encoder_layer = nn.TransformerEncoderLayer(d_model=self.hidden_dim, nhead=self.nhead, dim_feedforward=self.ff_hidden, batch_first=True)
         self.encoder = torch.nn.TransformerEncoder(encoder_layer=encoder_layer, num_layers=self.n_layers)
 
-        ### Decoder
         self.decoder = nn.Sequential(
-            nn.Linear(in_features=self.hidden_dim, out_features=self.hidden_dim), 
+            nn.Linear(in_features=7*self.hidden_dim, out_features=self.hidden_dim), 
             self.act_fn, 
             nn.Linear(in_features=self.hidden_dim, out_features=3)
         )
 
     def forward(self, nodes, loc, edges, vel, edge_attr, charges):
+        """
+        Forward pass through Transformer model
+
+        Keyword arguments:
+            nodes: Norms of velocity vectors. Shape: (n_nodes*batch_size) x 1
+            loc: Starting locations of nodes. Shape: (n_nodes*batch_size) x 3
+            edges: list of length 2, where each element is a 2000 dimensional tensor
+            vel: Starting velocities of nodes. Shape: (n_nodes*batch_size) x 3
+            edge_attr: Products of charges and squared relative distances between adjacent nodes (each have their own column). Shape: (n_edges*batch_size) x 2
+            charges: Charges of nodes . Shape: (n_nodes * batch_size) x 1
+        """
         # Positional encodings
-        pos_encodings = torch.cat([loc,vel], dim = 1).unsqueeze(2) # batch x 6 x 1
-        pos_encodings = self.pos_encoder(pos_encodings) # batch x 6 x hidden_dim
+        pos_encodings = torch.cat([loc,vel], dim = 1).unsqueeze(2) # n_nodes*batch x 6 x 1
+        pos_encodings = self.pos_encoder(pos_encodings) # n_nodes*batch x 6 x hidden_dim
         # Charge embeddings
         charges[charges == -1] = 0 # to work with nn.Embedding
         charges = charges.long()
-        charges = self.charge_embedding(charges)  # batch x 1 x hidden_dim
-        nodes = torch.cat([pos_encodings, charges], dim = 1).permute(1,0,2) # batch x 7 x hidden_dim -> this is because encoder expects these dimensions
-        h = self.encoder(nodes)
+        charges = self.charge_embedding(charges)  # n_nodes*batch x 1 x hidden_dim
+        nodes = torch.cat([pos_encodings, charges], dim = 1)#.permute(1,0,2) # 7 x n_nodes*batch_size x hidden_dim
+        h = self.encoder(nodes) # n_nodes*batch_size x 7 x hidden_dim
+        h = h.view(h.size(0), -1) # n_nodes*batch_size x (7*hiddent_dim)
         h = self.decoder(h) 
         return h
 
@@ -406,10 +452,7 @@ class PositionalEncoding(nn.Module):
         super().__init__()
         self.dropout = nn.Dropout(p=dropout)
         self.hidden_dim = hidden_dim
-        # Positional encoding from "Attention is All You Need" 
-        # Code: (https://pytorch.org/tutorials/beginner/transformer_tutorial.html)
-        # Math: (https://kazemnejad.com/blog/transformer_architecture_positional_encoding/)
-        self.div_term = torch.exp(torch.arange(0, hidden_dim, 2) * (-math.log(10000.0) / hidden_dim)).view(1,1,16)
+        self.div_term = torch.exp(torch.arange(0, hidden_dim, 2) * (-math.log(10000.0) / hidden_dim)).view(1,1, int(hidden_dim / 2))
 
     def forward(self, x):
         """
