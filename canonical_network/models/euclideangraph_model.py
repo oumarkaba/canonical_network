@@ -10,7 +10,6 @@ from canonical_network.models.vn_layers import *
 from canonical_network.models.euclideangraph_base_models import EGNN_vel, GNN, VNDeepSets, BaseEuclideangraphModel, Transformer
 from canonical_network.utils import define_hyperparams, dict_to_object
 
-# NOTE: Might need to change nhead...
 # Input dim is 6 because location and velocity vectors are concatenated.
 NBODY_HYPERPARAMS = {
     "learning_rate": 1e-3,

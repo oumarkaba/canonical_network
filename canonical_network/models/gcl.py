@@ -22,14 +22,14 @@ class MLP(nn.Module):
     def forward(self, x):
         return self.net(x)
 
-
+# Defines a parent class for all the following GNN layers.
 class GCL_basic(nn.Module):
     """Graph Neural Net with global state and fixed number of nodes per graph.
     Args:
-          hidden_dim: Number of hidden units.
-          num_nodes: Maximum number of nodes (for self-attentive pooling).
-          global_agg: Global aggregation function ('attn' or 'sum').
-          temp: Softmax temperature.
+          `hidden_dim`: Number of hidden units.
+          `num_nodes`: Maximum number of nodes (for self-attentive pooling).
+          `global_agg`: Global aggregation function ('attn' or 'sum').
+          `temp`: Softmax temperature.
     """
 
     def __init__(self):
@@ -42,19 +42,33 @@ class GCL_basic(nn.Module):
         pass
 
     def forward(self, x, edge_index, edge_attr=None):
+        
+        """
+        Based on equation (2) in https://arxiv.org/pdf/2102.09844.pdf. 
+        A matrix of edge features is created and used to update node features (m and h in paper).
+
+        Args:
+            `x`: Matrix of node embeddings. Shape: (n_nodes * batch_size) x hidden_dim
+            `edge_index`: Length 2 list of tensors, containing indices of adjacent nodes; each shape (n_edges * batch_size). 
+        """
         row, col = edge_index
+        # phi_e in the paper. returns a matrix m of edge features used to update node and feature embeddings.
+        # x[row], x[col] are embeddings of adjacent nodes
+        # edge_attr = edge attributes/features
         edge_feat = self.edge_model(x[row], x[col], edge_attr)
-        x = self.node_model(x, edge_index, edge_feat)
+        x = self.node_model(x, edge_index, edge_feat) # updates node embeddings (phi_h in the paper)
         return x, edge_feat
 
-
+# Graph convolutional layer
+# Based on equation (2) from https://arxiv.org/pdf/2102.09844.pdf
 class GCL(GCL_basic):
     """Graph Neural Net with global state and fixed number of nodes per graph.
+
     Args:
-          hidden_dim: Number of hidden units.
-          num_nodes: Maximum number of nodes (for self-attentive pooling).
-          global_agg: Global aggregation function ('attn' or 'sum').
-          temp: Softmax temperature.
+          `hidden_dim`: Number of hidden units.
+          `num_nodes`: Maximum number of nodes (for self-attentive pooling).
+          `global_agg`: Global aggregation function ('attn' or 'sum').
+          `temp`: Softmax temperature.
     """
 
     def __init__(
@@ -73,7 +87,7 @@ class GCL(GCL_basic):
         self.attention = attention
         self.t_eq = t_eq
         self.recurrent = recurrent
-        input_edge_nf = input_nf * 2
+        input_edge_nf = input_nf * 2 # because we concatenate 
         self.edge_mlp = nn.Sequential(
             nn.Linear(input_edge_nf + edges_in_nf, hidden_dim, bias=bias),
             act_fn,
@@ -93,33 +107,49 @@ class GCL(GCL_basic):
         # self.gru = nn.GRUCell(hidden_dim, hidden_dim)
 
     def edge_model(self, source, target, edge_attr):
-        edge_in = torch.cat([source, target], dim=1)
+        """
+        Returns matrix m from paper, of shape (batch_size * n_edges) x hidden_dim.
+
+        Args:
+            `source`: Embeddings of nodes start of edge. Shape: (batch_size * n_edges) x input_nf
+            `target`: Embeddings of nodes at end of edge. Shape: (batch_size * n_edges) x input_nf
+            `edge_attr`: Attributes of edges. Shape: (batch_size * n_edges) x edge_attr_dim
+        """
+        edge_in = torch.cat([source, target], dim=1) # (batch_size * n_edges) x (input_edge_nf)
         if edge_attr is not None:
-            edge_in = torch.cat([edge_in, edge_attr], dim=1)
-        out = self.edge_mlp(edge_in)
+            edge_in = torch.cat([edge_in, edge_attr], dim=1) # (batch_size * n_edges) x (input_edge_nf + edges_in_nf)
+        out = self.edge_mlp(edge_in) # m from paper, (batch_size * n_edges) x hidden_dim
         if self.attention:
             att = self.att_mlp(torch.abs(source - target))
             out = out * att
-        return out
+        return out #(batch_size * n_edges) x hidden_dim
 
     def node_model(self, h, edge_index, edge_attr):
+        """
+        Returns updated node embeddings, h, from paper. Shape: (n_nodes * batch_size) x output_nf
+
+        Args:
+            `h`: current node embeddings. Shape: (n_nodes * batch_size) x input_nf
+            `edge_index`: Indices of adjacent nodes. Shape: (n_edges * batch_size) x 2
+            `edge_attr`: Attributes of edges. Shape: (batch_size * n_edges) x hidden_dim (this is the output of edge_model)
+        """
         row, col = edge_index
-        agg = unsorted_segment_sum(edge_attr, row, num_segments=h.size(0))
-        out = torch.cat([h, agg], dim=1)
-        out = self.node_mlp(out)
+        # m_i from paper, where m__i = sum of edge attributes for edges adjacent to i (n_nodes x edge_attr_dim)
+        agg = unsorted_segment_sum(data=edge_attr, segment_ids=row, num_segments=h.size(0))
+        out = torch.cat([h, agg], dim=1) 
+        out = self.node_mlp(out) # phi_h from the paper. Shape: (n_nodes * batch_size) x output_nf
         if self.recurrent:
             out = out + h
             # out = self.gru(out, h)
         return out
 
-
 class GCL_rf(GCL_basic):
     """Graph Neural Net with global state and fixed number of nodes per graph.
     Args:
-          hidden_dim: Number of hidden units.
-          num_nodes: Maximum number of nodes (for self-attentive pooling).
-          global_agg: Global aggregation function ('attn' or 'sum').
-          temp: Softmax temperature.
+          `hidden_dim`: Number of hidden units.
+          `num_nodes`: Maximum number of nodes (for self-attentive pooling).
+          `global_agg`: Global aggregation function ('attn' or 'sum').
+          `temp`: Softmax temperature.
     """
 
     def __init__(self, nf=64, edge_attr_nf=0, reg=0, act_fn=nn.LeakyReLU(0.2), clamp=False):
@@ -148,13 +178,15 @@ class GCL_rf(GCL_basic):
         return x_out
 
 
+# Equivariant graph convolutional layer
+# Based on equations (3) - (6) from https://arxiv.org/pdf/2102.09844.pdf 
 class E_GCL(nn.Module):
     """Graph Neural Net with global state and fixed number of nodes per graph.
     Args:
-          hidden_dim: Number of hidden units.
-          num_nodes: Maximum number of nodes (for self-attentive pooling).
-          global_agg: Global aggregation function ('attn' or 'sum').
-          temp: Softmax temperature.
+          `hidden_dim`: Number of hidden units.
+          `num_nodes`: Maximum number of nodes (for self-attentive pooling).
+          `global_agg`: Global aggregation function ('attn' or 'sum').
+          `temp`: Softmax temperature.
     """
 
     def __init__(
@@ -394,7 +426,7 @@ class GCL_rf_vel(nn.Module):
 
 def unsorted_segment_sum(data, segment_ids, num_segments):
     """Custom PyTorch op to replicate TensorFlow's `unsorted_segment_sum`."""
-    result_shape = (num_segments, data.size(1))
+    result_shape = (num_segments, data.size(1)) 
     result = data.new_full(result_shape, 0)  # Init empty result tensor.
     segment_ids = segment_ids.unsqueeze(-1).expand(-1, data.size(1))
     result.scatter_add_(0, segment_ids, data)

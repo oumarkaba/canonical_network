@@ -43,14 +43,14 @@ class BaseEuclideangraphModel(pl.LightningModule):
         """
         Performs one training step.
 
-        Keyword arguments:
-        batch -- a list of tensors: [loc, vel, edge_attr, charges, loc_end]
-            loc: batch_size x n_nodes x 3 
-            vel: batch_size x n_nodes x 3
-            edge_attr: batch_size x n_edges x 1
-            charges: batch_size x n_nodes x 1
-            loc_end: batch_size x n_nodes x 3
-        batch_idx -- index of the batch
+        Args:
+            `batch`: a list of tensors [loc, vel, edge_attr, charges, loc_end]
+            `loc`: batch_size x n_nodes x 3 
+            `vel`: batch_size x n_nodes x 3
+            `edge_attr`: batch_size x n_edges x 1
+            `charges`: batch_size x n_nodes x 1
+            `loc_end`: batch_size x n_nodes x 3
+            `batch_idx`: index of the batch
         """
      
         batch_size, n_nodes, _ = batch[0].size()
@@ -77,14 +77,15 @@ class BaseEuclideangraphModel(pl.LightningModule):
         """
         Performs one validation step.
 
-        Keyword arguments:
-        batch -- a list of tensors: [loc, vel, edge_attr, charges, loc_end]
-            loc: batch_size x n_nodes x 3 
-            vel: batch_size x n_nodes x 3
-            edge_attr: batch_size x n_edges x 1
-            charges: batch_size x n_nodes x 1
-            loc_end: batch_size x n_nodes x 3
-        batch_idx -- index of the batch
+        Args:
+        Args:
+            `batch`: a list of tensors [loc, vel, edge_attr, charges, loc_end]
+            `loc`: batch_size x n_nodes x 3 
+            `vel`: batch_size x n_nodes x 3
+            `edge_attr`: batch_size x n_edges x 1
+            `charges`: batch_size x n_nodes x 1
+            `loc_end`: batch_size x n_nodes x 3
+            `batch_idx`: index of the batch
         """
         batch_size, n_nodes, _ = batch[0].size()
         batch = [d.view(-1, d.size(2)) for d in batch]
@@ -138,9 +139,9 @@ class BaseEuclideangraphModel(pl.LightningModule):
         """
         Returns a length 2 list of vertices, where edges[0][i] is adjacent to edges[1][i]
 
-        Keyword arguments:
-            batch_size: int, defined in train_nbody.HYPERPARAMS
-            n_nodes: always 5, since each sample has 5 nodes
+        Args:
+            `batch_size`: int, defined in `train_nbody.HYPERPARAMS`
+            `n_nodes`: number of nodes in each sample.
         """
         edges = [torch.LongTensor(self.edges[0]).to(self.device), torch.LongTensor(self.edges[1]).to(self.device)]
         if batch_size == 1:
@@ -154,7 +155,7 @@ class BaseEuclideangraphModel(pl.LightningModule):
             edges = [torch.cat(rows), torch.cat(cols)]
         return edges
 
-
+# Based on https://arxiv.org/pdf/2102.09844.pdf equation 7
 class EGNN_vel(BaseEuclideangraphModel):
     def __init__(self, hyperparams):
         super(EGNN_vel, self).__init__(hyperparams)
@@ -176,9 +177,9 @@ class EGNN_vel(BaseEuclideangraphModel):
         self.add_module(
             "gcl_%d" % 0,
             E_GCL_vel(
-                self.hidden_dim,
-                self.hidden_dim,
-                self.hidden_dim,
+                input_nf=self.hidden_dim,
+                output_nf=self.hidden_dim,
+                hidden_dim=self.hidden_dim,
                 edges_in_d=hyperparams.in_edge_nf,
                 act_fn=self.act_fn,
                 coords_weight=self.coords_weight,
@@ -192,9 +193,9 @@ class EGNN_vel(BaseEuclideangraphModel):
             self.add_module(
                 "gcl_%d" % i,
                 E_GCL_vel(
-                    self.hidden_dim,
-                    self.hidden_dim,
-                    self.hidden_dim,
+                    input_nf=self.hidden_dim,
+                    output_nf=self.hidden_dim,
+                    hidden_dim=self.hidden_dim,
                     edges_in_d=hyperparams.in_edge_nf,
                     act_fn=self.act_fn,
                     coords_weight=self.coords_weight,
@@ -208,9 +209,9 @@ class EGNN_vel(BaseEuclideangraphModel):
         self.add_module(
             "gcl_%d" % (self.n_layers - 1),
             E_GCL_vel(
-                self.hidden_dim,
-                self.hidden_dim,
-                self.hidden_dim,
+                input_nf=self.hidden_dim,
+                output_nf=self.hidden_dim,
+                hidden_dim=self.hidden_dim,
                 edges_in_d=hyperparams.in_edge_nf,
                 act_fn=self.act_fn,
                 coords_weight=self.coords_weight,
@@ -231,6 +232,7 @@ class EGNN_vel(BaseEuclideangraphModel):
         return x.squeeze(2)
 
 
+# Model based on https://arxiv.org/pdf/2102.09844.pdf, equations 3-6.
 class GNN(BaseEuclideangraphModel):
     def __init__(self, hyperparams):
         super(GNN, self).__init__(hyperparams)
@@ -247,9 +249,9 @@ class GNN(BaseEuclideangraphModel):
             self.add_module(
                 "gcl_%d" % i,
                 GCL(
-                    self.hidden_dim,
-                    self.hidden_dim,
-                    self.hidden_dim,
+                    input_nf=self.hidden_dim,
+                    output_nf=self.hidden_dim,
+                    hidden_dim=self.hidden_dim,
                     edges_in_nf=2,
                     act_fn=self.act_fn,
                     attention=self.attention,
@@ -425,13 +427,13 @@ class Transformer(BaseEuclideangraphModel):
         """
         Forward pass through Transformer model
 
-        Keyword arguments:
-            nodes: Norms of velocity vectors. Shape: (n_nodes*batch_size) x 1
-            loc: Starting locations of nodes. Shape: (n_nodes*batch_size) x 3
-            edges: list of length 2, where each element is a 2000 dimensional tensor
-            vel: Starting velocities of nodes. Shape: (n_nodes*batch_size) x 3
-            edge_attr: Products of charges and squared relative distances between adjacent nodes (each have their own column). Shape: (n_edges*batch_size) x 2
-            charges: Charges of nodes . Shape: (n_nodes * batch_size) x 1
+        Args:
+            `nodes`: Norms of velocity vectors. Shape: (n_nodes*batch_size) x 1
+            `loc`: Starting locations of nodes. Shape: (n_nodes*batch_size) x 3
+            `edges`: list of length 2, where each element is a 2000 dimensional tensor
+            `vel`: Starting velocities of nodes. Shape: (n_nodes*batch_size) x 3
+            `edge_attr`: Products of charges and squared relative distances between adjacent nodes (each have their own column). Shape: (n_edges*batch_size) x 2
+            `charges`: Charges of nodes . Shape: (n_nodes * batch_size) x 1
         """
         # Positional encodings
         pos_encodings = torch.cat([loc,vel], dim = 1).unsqueeze(2) # n_nodes*batch x 6 x 1
