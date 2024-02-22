@@ -108,7 +108,7 @@ class GCL(GCL_basic):
 
     def edge_model(self, source, target, edge_attr):
         """
-        Returns matrix m from paper, of shape (batch_size * n_edges) x hidden_dim.
+        Returns matrix m from eqn. (2) in paper, of shape (batch_size * n_edges) x hidden_dim.
 
         Args:
             `source`: Embeddings of nodes start of edge. Shape: (batch_size * n_edges) x input_nf
@@ -141,7 +141,7 @@ class GCL(GCL_basic):
         if self.recurrent:
             out = out + h
             # out = self.gru(out, h)
-        return out
+        return out #Shape: (n_nodes * batch_size) x output_nf
 
 class GCL_rf(GCL_basic):
     """Graph Neural Net with global state and fixed number of nodes per graph.
@@ -230,7 +230,7 @@ class E_GCL(nn.Module):
             nn.Linear(hidden_dim + input_nf + nodes_att_dim, hidden_dim), act_fn, nn.Linear(hidden_dim, output_nf)
         )
 
-        layer = nn.Linear(hidden_dim, num_vectors_in * num_vectors_out, bias=False)
+        layer = nn.Linear(hidden_dim, num_vectors_in * num_vectors_out, bias=False) # outputs a scalar
         torch.nn.init.xavier_uniform_(layer.weight, gain=0.001)
 
         self.clamp = clamp
@@ -250,50 +250,90 @@ class E_GCL(nn.Module):
         #    self.gru = nn.GRUCell(hidden_dim, hidden_dim)
 
     def edge_model(self, source, target, radial, edge_attr):
+        """
+        Returns matrix m from eqn. (3) from paper, of shape (batch_size * n_edges) x hidden_dim.
+
+        Args:
+            `source`: Embeddings of nodes start of edge. Shape: (batch_size * n_edges) x input_nf
+            `target`: Embeddings of nodes at end of edge. Shape: (batch_size * n_edges) x input_nf
+            `radial`: Squared distances between coordinates of adjacent nodes. Shape: (n_edges * batch_size) x 1
+            `edge_attr`: Attributes of edges. Shape: (batch_size * n_edges) x edge_attr_dim
+        """
         if edge_attr is None:  # Unused.
             out = torch.cat([source, target, radial], dim=1)
         else:
-            out = torch.cat([source, target, radial, edge_attr], dim=1)
-        out = self.edge_mlp(out)
+            out = torch.cat([source, target, radial, edge_attr], dim=1) # concatenates inputs to be passed into phi_e
+        out = self.edge_mlp(out) # phi_e from eqn. (3). Shape: (n_nodes * batch_size) x hidden_dim
         if self.attention:
             att_val = self.att_mlp(out)
             out = out * att_val
-        return out
+        return out #Shape: (n_nodes * batch_size) x hidden_dim
 
-    def node_model(self, x, edge_index, edge_attr, node_attr):
-        row, col = edge_index
-        agg = unsorted_segment_sum(edge_attr, row, num_segments=x.size(0))
+    def node_model(self, h, edge_index, edge_attr, node_attr):
+        """
+        Returns tuple containing updated node embeddings, h, from eqn. (6). and m_i from eqn. (5).
+        Shape: ((n_nodes * batch_size) x output_nf, (n_nodes * batch_size) x (2*hidden_dim))
+
+        Args:
+            `h`: Node feature embeddings. Shape: (n_nodes * batch_size) x input_nf
+            `edge_index`: Indices of adjacent nodes. Shape: (n_edges * batch_size) x 2
+            `edge_attr`: Attributes of edges. Matrix m from eqn. (3). Shape: (n_edges * batch_size) x hidden_dim (this is the output of edge_model)
+            `node_attr`: Node coordinate embeddings. Shape: (n_nodes * batch_size) x coord_dim
+        """
+        row, col = edge_index # Indices of adjacent nodes
+        agg = unsorted_segment_sum(edge_attr, row, num_segments=h.size(0)) # (n_nodes * batch_size) x hidden_dim. m_i from paper.
         if node_attr is not None:
-            agg = torch.cat([x, agg, node_attr], dim=1)
+            agg = torch.cat([h, agg, node_attr], dim=1)
         else:
-            agg = torch.cat([x, agg], dim=1)
-        out = self.node_mlp(agg)
+            agg = torch.cat([h, agg], dim=1) # concatenate inputs for phi_h. (n_nodes * batch_size) x (2*hidden_dim)
+        # phi_h from eqn. (6). Updates node feature embeddings. Shape: (n_nodes * batch_size) x output_nf
+        out = self.node_mlp(agg) 
         if self.recurrent:
-            out = x + out
-        return out, agg
+            out = h + out
+        return out, agg # Shape: ((n_nodes * batch_size) x output_nf, (n_nodes * batch_size) x (2*hidden_dim))
 
     def coord_model(self, coord, edge_index, coord_diff, radial, edge_feat):
-        row, col = edge_index
-        coord_matrix = self.coord_mlp(edge_feat).view(-1, self.num_vectors_in, self.num_vectors_out)
+        """
+        Returns updated coordinate embeddings from eqn. (4). Shape: n_nodes * batch_size x 3 x 1
+
+        Args:
+            `coord`: Coordinates of nodes. Shape: (batch_size * n_nodes) x coord_dim
+            `edge_index`: Indices of adjacent nodes. Shape: (n_edges * batch_size) x 2
+            `coord_diff`: Differences between coords of adjacent nodes. Shape: (batch_size * n_edges) x coord_dim
+            `radial`: Squared distances of coords of adjacent nodes. Shape: (n_edges * batch_size) x 1
+            `edge_feat`: Matrix m from eqn. (3). (n_edges * batch_size) x hidden_dim
+        """
+        row, col = edge_index # indices of adjacent nodes
+        # Eqn. (4) phi_x(m_ij). Shape: (n_edges * batch_size) x num_vectors_in x num_vectors_out 
+        coord_matrix = self.coord_mlp(edge_feat).view(-1, self.num_vectors_in, self.num_vectors_out) 
         if coord_diff.dim() == 2:
             coord_diff = coord_diff.unsqueeze(2)
-            coord = coord.unsqueeze(2).repeat(1, 1, self.num_vectors_out)
+            coord = coord.unsqueeze(2).repeat(1, 1, self.num_vectors_out) # n_nodes * batch_size x coord_dim x num_vectors_out
         # coord_diff = coord_diff / radial.unsqueeze(1)
-        trans = torch.einsum("bij,bci->bcj", coord_matrix, coord_diff)
+        # 
+        trans = torch.einsum("bij,bci->bcj", coord_matrix, coord_diff)  # (n_edges * batch_size) x coord_dim x 1
         trans = torch.clamp(
             trans, min=-100, max=100
         )  # This is never activated but just in case it case it explosed it may save the train
-        agg = unsorted_segment_mean(trans, row, num_segments=coord.size(0))
+        agg = unsorted_segment_mean(trans, row, num_segments=coord.size(0)) # n_nodes * batch_size x coord_dim x 1. sum from eqn. (4)
         if self.last_layer:
             coord = coord.mean(dim=2, keepdim=True) + agg * self.coords_weight
         else:
-            coord += agg * self.coords_weight
-        return coord
+            coord += agg * self.coords_weight # Update coordinate embeddings following eqn. (4)
+        return coord # 
 
     def coord2radial(self, edge_index, coord):
-        row, col = edge_index
-        coord_diff = coord[row] - coord[col]
-        radial = torch.sum((coord_diff) ** 2, 1).unsqueeze(1)
+        """
+        Returns a tuple of differences and squared differences of coordinates adjacent vertices.
+        ((n_edges * batch_size) x 1, (batch_size * n_edges) x coord_dim)
+
+        Args:
+            `edge_attr`: Attributes of edges. Shape: (batch_size * n_edges) x hidden_dim (this is the output of edge_model)
+            `coord`: Coordinates of nodes. Shape: (batch_size * n_nodes) x coord_dim
+        """
+        row, col = edge_index # indices of adjacent nodes.
+        coord_diff = coord[row] - coord[col] # differences between cords of adjacent nodes. Shape: (batch_size * n_edges) x coord_dim
+        radial = torch.sum((coord_diff) ** 2, 1).unsqueeze(1) # squared distances. Shape: (n_edges * batch_size) x 1
 
         if self.norm_diff:
             norm = torch.sqrt(radial) + 1
@@ -302,20 +342,29 @@ class E_GCL(nn.Module):
         if radial.dim() == 3:
             radial = radial.squeeze(1)
 
-        return radial, coord_diff
+        return radial, coord_diff # returns squared dists and diffs
 
     def forward(self, h, edge_index, coord, edge_attr=None, node_attr=None):
-        row, col = edge_index
-        radial, coord_diff = self.coord2radial(edge_index, coord)
-
-        edge_feat = self.edge_model(h[row], h[col], radial, edge_attr)
-        coord = self.coord_model(coord, edge_index, coord_diff, radial, edge_feat)
+        """
+        Based on equations (3)-(6) in https://arxiv.org/pdf/2102.09844.pdf.
+        Updates node feature and coordinate embeddings.
+         
+        Args:
+            `h`: Node feature embeddings. Shape: (n_nodes * batch_size) x hidden_dim
+            `edge_index`: Indices of adjacent nodes. Shape: (n_edges * batch_size) x 2
+            `coord`: Node coordinates. Shape: (n_nodes * batch_size) x coord_dim
+        """
+        row, col = edge_index #indices of adjacent nodes
+        # squared dists and diffs. (n_edges * batch_size) x 1, (batch_size * n_edges) x coord_dim
+        radial, coord_diff = self.coord2radial(edge_index, coord) 
+        edge_feat = self.edge_model(h[row], h[col], radial, edge_attr) #Shape: (n_edges * batch_size) x hidden_dim
+        coord = self.coord_model(coord, edge_index, coord_diff, radial, edge_feat) # Updated coord embeddings from eqn. 4. (n_nodes * batch_size) x coord_dim x 1
         h, agg = self.node_model(h, edge_index, edge_feat, node_attr)
         # coord = self.node_coord_model(h, coord)
         # x = self.node_model(x, edge_index, x[col], u, batch)  # GCN
         return h, coord, edge_attr
 
-
+# Based on section 3.2 in https://arxiv.org/pdf/2102.09844.pdf. 
 class E_GCL_vel(E_GCL):
     """Graph Neural Net with global state and fixed number of nodes per graph.
     Args:
@@ -365,17 +414,28 @@ class E_GCL_vel(E_GCL):
         )
 
     def forward(self, h, edge_index, coord, vel, edge_attr=None, node_attr=None):
-        row, col = edge_index
+        """
+        Based on section 3.2 in https://arxiv.org/pdf/2102.09844.pdf.
+        Updates node feature, coordinate, and velocity embeddings.
+         
+        Args:
+            `h`: Node feature embeddings. Shape: (n_nodes * batch_size) x hidden_dim
+            `edge_index`: Indices of adjacent nodes. Shape: (n_edges * batch_size) x 2
+            `coord`: Node coordinates. Shape: (n_nodes * batch_size) x coord_dim
+            `vel`: Node velocities. Shape: (n_nodes * batch_size) x vel_dim
+        """
+        row, col = edge_index #Indices of adjacent nodes
+        # squared dists and diffs. (n_edges * batch_size) x 1, (batch_size * n_edges) x coord_dim
         radial, coord_diff = self.coord2radial(edge_index, coord)
 
-        edge_feat = self.edge_model(h[row], h[col], radial, edge_attr)
-        coord = self.coord_model(coord, edge_index, coord_diff, radial, edge_feat)
-
-        coord_vel_matrix = self.coord_mlp_vel(h).view(-1, self.num_vectors_in, self.num_vectors_out)
+        edge_feat = self.edge_model(h[row], h[col], radial, edge_attr) #Shape: (n_edges * batch_size) x hidden_dim
+        coord = self.coord_model(coord, edge_index, coord_diff, radial, edge_feat) # Updated coord embeddings from eqn. 4. (n_nodes * batch_size) x coord_dim x 1
+        # phi_v from eqn. 7. Shape: (n_nodes * batch_size) x num_vectors_in * num_vectors_out
+        coord_vel_matrix = self.coord_mlp_vel(h).view(-1, self.num_vectors_in, self.num_vectors_out) 
         if vel.dim() == 2:
             vel = vel.unsqueeze(2)
-        coord += torch.einsum("bij,bci->bcj", coord_vel_matrix, vel)
-        h, agg = self.node_model(h, edge_index, edge_feat, node_attr)
+        coord += torch.einsum("bij,bci->bcj", coord_vel_matrix, vel) # eqn. (7)
+        h, agg = self.node_model(h, edge_index, edge_feat, node_attr) # updates node embeddings
         # coord = self.node_coord_model(h, coord)
         # x = self.node_model(x, edge_index, x[col], u, batch)  # GCN
         return h, coord, edge_attr

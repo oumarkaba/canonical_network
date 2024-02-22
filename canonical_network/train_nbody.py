@@ -9,7 +9,7 @@ from canonical_network.models.euclideangraph_model import NBODY_HYPERPARAMS, Euc
 from canonical_network.models.euclideangraph_base_models import EGNN_vel, GNN, VNDeepSets, Transformer
 
 # Change model here
-HYPERPARAMS = {"model": "GNN", 
+HYPERPARAMS = {"model": "EGNN", 
                "canon_model_type": "vndeepsets", 
                "pred_model_type": "GNN", 
                "batch_size": 100, 
