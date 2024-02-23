@@ -222,14 +222,22 @@ class EGNN_vel(BaseEuclideangraphModel):
                 last_layer=True,
             ),
         )
-    '''
-    
-    '''
+
     def forward(self, h, x, edges, vel, edge_attr, _):
-        h = self.embedding(h)
+        """
+        Returns: Node coordinate embeddings
+        Args:
+            `h`: Norms of velocity vectors. Shape: (n_nodes * batch_size) x 1
+            `x`: Coordinates of nodes. Shape: (n_nodes * batch_size) x coord_dim
+            `edges`: Length 2 list of vertices, where edges[0][i] is adjacent to edges[1][i]. 
+            `vel`: Velocities of nodes. Shape: (n_nodes * batch_size) x vel_dim
+            `edge_attr`: Products of charges along edges. batch_size x n_edges x 1
+        """
+        h = self.embedding(h) # Node embeddings. (n_nodes * batch_size) x hidden_dim
+        # Applies each layer of EGNN
         for i in range(0, self.n_layers):
             h, x, _ = self._modules["gcl_%d" % i](h, edges, x, vel, edge_attr=edge_attr)
-        return x.squeeze(2)
+        return x.squeeze(2) # Predicted coordinates
 
 
 # Model based on https://arxiv.org/pdf/2102.09844.pdf, equations 3-6.
@@ -265,14 +273,23 @@ class GNN(BaseEuclideangraphModel):
         self.embedding = nn.Sequential(nn.Linear(self.input_dim, self.hidden_dim))
 
     def forward(self, nodes, loc, edges, vel, edge_attr, _):
-        nodes = torch.cat([loc, vel], dim=1)
-        h = self.embedding(nodes)
+        """
+        Returns: Node coordinate embeddings
+        Args:
+            `nodes`: Norms of velocity vectors. Shape: (n_nodes * batch_size) x 1
+            `loc`: Coordinates of nodes. Shape: (n_nodes * batch_size) x coord_dim
+            `edges`: Length 2 list of vertices, where edges[0][i] is adjacent to edges[1][i]. 
+            `vel`: Velocities of nodes. Shape: (n_nodes * batch_size) x vel_dim
+            `edge_attr`: Products of charges along edges. batch_size x n_edges x 1
+        """
+        nodes = torch.cat([loc, vel], dim=1) # (n_nodes * batch_size) x (coord_dim + vel_dim)
+        h = self.embedding(nodes) # (n_nodes * batch_size) x hidden_dim
         # h, _ = self._modules["gcl_0"](h, edges, edge_attr=edge_attr)
         for i in range(0, self.n_layers):
             h, _ = self._modules["gcl_%d" % i](h, edges, edge_attr=edge_attr)
         # h is 500x32 and then passed to decoder to become 500x3
         # return h
-        return self.decoder(h)
+        return self.decoder(h) # (n_nodes * batch_size) x 3
 
 
 class VNDeepSets(BaseEuclideangraphModel):
@@ -454,13 +471,15 @@ class PositionalEncoding(nn.Module):
         super().__init__()
         self.dropout = nn.Dropout(p=dropout)
         self.hidden_dim = hidden_dim
-        self.div_term = torch.exp(torch.arange(0, hidden_dim, 2) * (-math.log(10000.0) / hidden_dim)).view(1,1, int(hidden_dim / 2))
+        self.div_term = torch.exp(torch.arange(0, hidden_dim, 2) * (-math.log(10000.0) / hidden_dim)).view(1,1, int(hidden_dim / 2)) # 1 x 1 x (hidden_dim / 2)
 
     def forward(self, x):
         """
-        Input - x: (batch_size x 6) (6 since velocity and location vectors are concatenated)
+        Returns positional encoding of coordinates and velocities.
+        Args:
+            `x`: Concatenated velocity and coordinate vectors. Shape: (n_nodes * batch_size x 6)
         """
-        pe = torch.zeros(x.shape[0],x.shape[1], self.hidden_dim) # batch x 6 x 32
-        pe[:, :,0::2] = torch.sin(x * self.div_term) # 500 x 6 x 1 * 1 x 1 x 16
-        pe[:, :,1::2] = torch.cos(x * self.div_term) # 500 x 6 x 1 * 1 x 1 x 16
+        pe = torch.zeros(x.shape[0],x.shape[1], self.hidden_dim) # (n_nodes * batch_size) x 6 x 32
+        pe[:, :,0::2] = torch.sin(x * self.div_term) 
+        pe[:, :,1::2] = torch.cos(x * self.div_term) 
         return self.dropout(pe)
