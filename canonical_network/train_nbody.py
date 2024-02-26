@@ -11,10 +11,10 @@ from canonical_network.models.euclideangraph_base_models import EGNN_vel, GNN, V
 # Change model here
 HYPERPARAMS = {"model": "Transformer", 
                "canon_model_type": "vndeepsets", 
-               "pred_model_type": "GNN", 
+               "pred_model_type": "Transformer", 
                "batch_size": 100, 
                "dryrun": False, 
-               "use_wandb": False, 
+               "use_wandb": True, 
                "checkpoint": False, 
                "num_epochs": 1000, 
                "num_workers":0, 

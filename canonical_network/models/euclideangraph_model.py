@@ -12,7 +12,7 @@ from canonical_network.utils import define_hyperparams, dict_to_object
 
 # Input dim is 6 because location and velocity vectors are concatenated.
 NBODY_HYPERPARAMS = {
-    "learning_rate": 1e-3,
+    "learning_rate": 1e-4, #1e-3
     "weight_decay": 1e-12,
     "patience": 1000,
     "hidden_dim": 32,

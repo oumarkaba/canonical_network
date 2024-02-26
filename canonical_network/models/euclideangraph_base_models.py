@@ -417,12 +417,13 @@ class VNDeepSetLayer(nn.Module):
 class Transformer(BaseEuclideangraphModel):
     def __init__(self, hyperparams):
         super(Transformer, self).__init__(hyperparams)
+        print(hyperparams)
         self.model = "Transformer"
-        self.hidden_dim = hyperparams.hidden_dim #32
+        self.hidden_dim =  16 #hyperparams.hidden_dim #32
         self.input_dim = hyperparams.input_dim #6
         self.n_layers = hyperparams.num_layers #4
         self.ff_hidden = self.hidden_dim * 8
-        self.act_fn = nn.ReLU() #NOTE: I randomly chose this... check later
+        self.act_fn = nn.ReLU()
         self.dropout = 0
         self.nhead = 8
 
@@ -430,14 +431,13 @@ class Transformer(BaseEuclideangraphModel):
 
         self.charge_embedding = nn.Embedding(2,self.hidden_dim)
 
-        # Input: 5*batch_size x seq_len x hidden_dim
-        encoder_layer = nn.TransformerEncoderLayer(d_model=self.hidden_dim, nhead=self.nhead, dim_feedforward=self.ff_hidden, batch_first=True)
+        encoder_layer = nn.TransformerEncoderLayer(d_model=7*self.hidden_dim, nhead=self.nhead, dim_feedforward=self.ff_hidden, batch_first=True)
         self.encoder = torch.nn.TransformerEncoder(encoder_layer=encoder_layer, num_layers=self.n_layers)
 
         self.decoder = nn.Sequential(
-            nn.Linear(in_features=7*self.hidden_dim, out_features=self.hidden_dim), 
+            nn.Linear(in_features=7*self.hidden_dim, out_features=7*self.hidden_dim), 
             self.act_fn, 
-            nn.Linear(in_features=self.hidden_dim, out_features=3)
+            nn.Linear(in_features=7*self.hidden_dim, out_features=3)
         )
 
     def forward(self, nodes, loc, edges, vel, edge_attr, charges):
@@ -459,9 +459,10 @@ class Transformer(BaseEuclideangraphModel):
         charges[charges == -1] = 0 # to work with nn.Embedding
         charges = charges.long()
         charges = self.charge_embedding(charges)  # n_nodes*batch x 1 x hidden_dim
-        nodes = torch.cat([pos_encodings, charges], dim = 1)#.permute(1,0,2) # 7 x n_nodes*batch_size x hidden_dim
-        h = self.encoder(nodes) # n_nodes*batch_size x 7 x hidden_dim
-        h = h.view(h.size(0), -1) # n_nodes*batch_size x (7*hiddent_dim)
+        nodes = torch.cat([pos_encodings, charges], dim = 1) # n_nodes * batch_size x 7 x hidden_dim
+        nodes = nodes.view(-1, 5, nodes.shape[1]*nodes.shape[2]) # batch_size x n_nodes x (7 * hidden_dim)
+        h = self.encoder(nodes) # batch_size x n_nodes x (7 * hidden_dim)
+        h = h.view(-1,h.shape[2])
         h = self.decoder(h) 
         return h
 
@@ -477,9 +478,10 @@ class PositionalEncoding(nn.Module):
         """
         Returns positional encoding of coordinates and velocities.
         Args:
-            `x`: Concatenated velocity and coordinate vectors. Shape: (n_nodes * batch_size x 6)
+            `x`: Concatenated velocity and coordinate vectors. Shape: (n_nodes * batch_size x 6 x 1)
         """
         pe = torch.zeros(x.shape[0],x.shape[1], self.hidden_dim) # (n_nodes * batch_size) x 6 x 32
-        pe[:, :,0::2] = torch.sin(x * self.div_term) 
+        sin_terms = torch.sin(x * self.div_term) 
+        pe[:, :,0::2] = sin_terms
         pe[:, :,1::2] = torch.cos(x * self.div_term) 
         return self.dropout(pe)
