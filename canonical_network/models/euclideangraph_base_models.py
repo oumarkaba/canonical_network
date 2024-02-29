@@ -472,7 +472,8 @@ class PositionalEncoding(nn.Module):
         super().__init__()
         self.dropout = nn.Dropout(p=dropout)
         self.hidden_dim = hidden_dim
-        self.div_term = torch.exp(torch.arange(0, hidden_dim, 2) * (-math.log(10000.0) / hidden_dim)).view(1,1, int(hidden_dim / 2)) # 1 x 1 x (hidden_dim / 2)
+        div_term = torch.exp(torch.arange(0, hidden_dim, 2) * (-math.log(10000.0) / hidden_dim)).view(1,1, int(hidden_dim / 2)) # 1 x 1 x (hidden_dim / 2)
+        self.register_buffer('div_term', div_term)
 
     def forward(self, x):
         """
@@ -480,7 +481,7 @@ class PositionalEncoding(nn.Module):
         Args:
             `x`: Concatenated velocity and coordinate vectors. Shape: (n_nodes * batch_size x 6 x 1)
         """
-        pe = torch.zeros(x.shape[0],x.shape[1], self.hidden_dim) # (n_nodes * batch_size) x 6 x 32
+        pe = torch.zeros(x.shape[0],x.shape[1], self.hidden_dim).to(x.device) # (n_nodes * batch_size) x 6 x 32
         sin_terms = torch.sin(x * self.div_term) 
         pe[:, :,0::2] = sin_terms
         pe[:, :,1::2] = torch.cos(x * self.div_term) 
