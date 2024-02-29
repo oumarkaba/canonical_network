@@ -419,13 +419,13 @@ class Transformer(BaseEuclideangraphModel):
         super(Transformer, self).__init__(hyperparams)
         print(hyperparams)
         self.model = "Transformer"
-        self.hidden_dim =  16 #hyperparams.hidden_dim #32
+        self.hidden_dim =  hyperparams.hidden_dim #32
         self.input_dim = hyperparams.input_dim #6
         self.n_layers = hyperparams.num_layers #4
-        self.ff_hidden = self.hidden_dim * 8
+        self.ff_hidden = hyperparams.ff_hidden
         self.act_fn = nn.ReLU()
         self.dropout = 0
-        self.nhead = 8
+        self.nhead = hyperparams.nheads
 
         self.pos_encoder = PositionalEncoding(hidden_dim=self.hidden_dim, dropout=self.dropout)
 

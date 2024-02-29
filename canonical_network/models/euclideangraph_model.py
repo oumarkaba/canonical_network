@@ -15,11 +15,11 @@ NBODY_HYPERPARAMS = {
     "learning_rate": 1e-4, #1e-3
     "weight_decay": 1e-12,
     "patience": 1000,
-    "hidden_dim": 32,
+    "hidden_dim": 32, #32
     "input_dim": 6,
     "in_node_nf": 1,
     "in_edge_nf": 2,
-    "num_layers": 4,
+    "num_layers": 2, #4
     "out_dim": 1,
     "canon_num_layers": 4,
     "canon_hidden_dim": 16,
@@ -35,7 +35,9 @@ NBODY_HYPERPARAMS = {
     "final_pooling": "mean",
     "nonlinearity": "relu",
     "angular_feature": "pv",
-    "dropout": 0,
+    "dropout": 0.5, #0
+    "nheads": 8,
+    "ff_hidden": 32
 }
 
 class EuclideangraphCanonFunction(pl.LightningModule):
