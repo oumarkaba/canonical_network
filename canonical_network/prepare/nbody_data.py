@@ -42,21 +42,30 @@ class NBodyDataset():
         # cast to torch and swap n_nodes <--> n_features dimensions
         loc, vel = torch.Tensor(loc).transpose(2, 3), torch.Tensor(vel).transpose(2, 3)
         n_nodes = loc.size(2)
-        loc = loc[0:self.max_samples, :, :, :]  # limit number of samples
-        vel = vel[0:self.max_samples, :, :, :]  # speed when starting the trajectory
-        charges = charges[0:self.max_samples]
+        loc = loc[0:self.max_samples, :, :, :]  # limit number of samples, max_samples x 49 x 5 x 3
+        vel = vel[0:self.max_samples, :, :, :]  # speed when starting the trajectory, max_samples x 49 x 5 x 3
+        charges = charges[0:self.max_samples] # max_samples x 5 x 1
         edge_attr = []
 
+        # edges is currently 10000 x 5 x 5.
+        # i believe M = edges[i,:,:] is a symmetric matrix where M[j][k] = charges[i][j] * charges[i][k]
         #Initialize edges and edge_attributes
         rows, cols = [], []
         for i in range(n_nodes):
             for j in range(n_nodes):
+                # if i != j, append charge(node_i)*charge(node_j) for all samples
+                # and save the combination of row and col
                 if i != j:
-                    edge_attr.append(edges[:, i, j])
+                    # edge_attr.append(edges[:, i, j]) #COMMENTED THIS OUT! SEEMED TO USE UNEEDED ROWS
+                    # could we instead just use edge_attr.append(edges[:self.max_samples, i, j])? --> I think so. would save memory too
+                    edge_attr.append(edges[:self.max_samples, i, j])
                     rows.append(i)
                     cols.append(j)
+        # Once loop is over, 
+        # edge_attr = list all charge products between distinct nodes (20 x max_samples) (ie. product for all edges)
+        # where edge_attr[i] = product of charges for node rows[i] and cols[i]
         edges = [rows, cols]
-        edge_attr = torch.Tensor(edge_attr).transpose(0, 1).unsqueeze(2) # swap n_nodes <--> batch_size and add nf dimension
+        edge_attr = torch.Tensor(edge_attr).transpose(0, 1).unsqueeze(2) # swap n_nodes <--> batch_size and add nf dimension -> 10000 x 20 x 1
 
         return torch.Tensor(loc), torch.Tensor(vel), torch.Tensor(edge_attr), edges, torch.Tensor(charges)
 

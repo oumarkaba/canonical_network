@@ -1,0 +1,12 @@
+program: /home/jikael/mcgill/comp396/canonical_network/canonical_network/canonical_network/train_nbody.py
+entity: symmetry_group
+method: bayes
+metric:
+  goal: minimize
+  name: valid/loss.min
+name: Transformer Optimization 3
+parameters:
+  learning_rate:
+    distribution: log_uniform_values
+    min: 1e-4
+    max: 1e-3
